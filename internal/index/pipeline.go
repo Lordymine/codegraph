@@ -61,9 +61,9 @@ func Run(store *graph.Store, root string) (Result, error) {
 		allEdges = append(allEdges, r.edges...)
 	}
 
-	// IMPORTS edges (TS/JS) + (future) CALLS edges.
+	// IMPORTS edges (TS/JS) + CALLS edges (scip-typescript per subproject).
 	allEdges = append(allEdges, ResolveImports(project, files)...)
-	allEdges = append(allEdges, ResolveCalls(project, files)...)
+	allEdges = append(allEdges, ResolveCalls(project, root, files, allNodes)...)
 
 	if err := store.InsertNodes(allNodes); err != nil {
 		return Result{}, fmt.Errorf("insert nodes: %w", err)
