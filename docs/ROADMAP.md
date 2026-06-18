@@ -13,35 +13,55 @@ Milestones, smallest-useful-first. Each one ships something runnable.
 - **Proof:** `codegraph index .` on itself → 9 files, 75 nodes, 66 edges; `search`
   returns correct file+line refs.
 
-## M1 — Real ASTs via tree-sitter
+## M1 — Real ASTs via tree-sitter ✅ (done)
 
-Replace the regex extractor with `github.com/smacker/go-tree-sitter` + Go/TS/TSX
-grammars.
+Replaced the regex extractor with the **official** `github.com/tree-sitter/go-tree-sitter`
+(cgo) + Go/TS/TSX grammars (not smacker — it had drifted since ~2023).
 
-- Accurate node boundaries (true `end_line`, nested methods, decorators).
-- Capture `properties`: signature, param names/types, return type, `is_exported`,
-  `is_test`, decorator tags (so NestJS `@Injectable`/`@Controller` are visible).
-- `IMPORTS` edges from import statements (cheap, accurate).
-- **Exit criteria:** node counts within ~10% of upstream on the ajudaqui repo.
+- Accurate node boundaries (true `end_line`), receiver/owner-qualified names so
+  homonyms disambiguate, `is_exported`, `is_test`.
+- Full TS surface: Function/Method/Class + Interface/Type/Enum/Variable, abstract
+  classes, function expressions. Decorators on classes AND methods (NestJS
+  `@Injectable`/`@Controller`/`@Get`/`@Post`) — captured generically as strings,
+  so any decorator framework (Angular, TypeORM) comes for free.
+- `IMPORTS` edges (TS/JS): relative specifiers resolved File→File; package/unresolved
+  imports dropped (honest precision). Go imports deferred (package-level model).
+- Build needs cgo: gcc on PATH + `CGO_ENABLED=1` (WinLibs mingw-w64 on this machine).
+- **Result vs upstream on ajuda-aqui (857 files, 3.1s):** Interface 393=393, Type
+  141=141, decorators 363=363, Method 1052≈1053, Class 343≈344. Divergences
+  (Function, Variable, File) are deliberate scope (top-level only, ignored dirs).
+- **Scope left out (not bugs):** nested functions/callbacks, property decorators
+  (`@Column`), Go interface-vs-struct (both → Class).
 
-## M2 — CALLS edges via LSP delegation (the big one)
+Design note: **codegraph indexes the LANGUAGE (TS/JS/Go), not frameworks.** All of
+NestJS/Next/Electron/RN/Expo/Fastify/Tauri are TS/JS — symbols/imports/calls work
+for all of them with zero per-framework code. Framework semantics (HTTP routes,
+IPC, DI) are an optional, pluggable pass added only on real need.
 
-The hard, valuable part. Instead of re-implementing type resolution:
+## M2 — CALLS edges (the big one) — IN PROGRESS
 
-1. tree-sitter finds call expressions + their enclosing function (the caller QN).
-2. For each call site, ask the language's LSP server for the definition:
-   - Go → `gopls`
-   - TS/JS → `typescript-language-server` / `tsserver` / typescript-go
-   via `textDocument/definition` (start one LSP per language, reuse the session).
-3. Map the returned definition location back to a node QN → emit `CALLS` edge.
-4. Drop unresolved calls (honest precision).
+The hard, valuable part. Delegate to the real compiler, but via BATCH indexers —
+NOT interactive LSP (callHierarchy/references is O(symbols) round-trips for a
+whole-repo graph, plus cold start). The batch tools have the SAME type-checker
+precision in one pass:
 
-- **Why this bet:** real type-checker accuracy, no per-language reimplementation.
-- **Risks:** LSP startup latency (amortize by batching), TS project config
-  discovery (tsconfig), mapping a definition *location* to our node (line-range
-  containment). Cache resolutions by (file, callee-text, scope).
-- **Exit criteria:** `callers`/`callees` correct on the ajudaqui validation-codes
-  module (the 4 same-named `getActiveCode` disambiguated correctly).
+- **Go → in-process**, no gopls subprocess: `golang.org/x/tools/go/packages`
+  (LoadAllSyntax) + `go/callgraph` (CHA — sound on libraries without a `main`).
+  These are the libs gopls itself calls.
+- **TS/JS → `scip-typescript` (batch)** → read `index.scip` in-process via
+  `github.com/sourcegraph/scip/bindings/go/scip`. SCIP emits reference occurrences,
+  not call edges → a ~100-line enclosing-range attribution pass turns them into
+  caller→callee CALLS (port `Beneficial-AI-Foundation/scip-callgraph`).
+- Keep M1 tree-sitter as the cheap structural layer; tag edge confidence so
+  compiler-resolved edges supersede heuristic ones.
+- **Why batch not LSP:** same precision, one pass, far less Go code, no long-lived
+  process to babysit. Cost: build-time Node + tsconfig dep (binary stays single).
+- **Risks:** monorepo tsconfig (scip has `--pnpm-workspaces`/`--infer-tsconfig`);
+  NestJS DI (`@Inject('TOKEN')`, `useClass`/`useFactory`) is invisible to ALL
+  resolvers (binding lives in a `providers` array) — a separate framework pass.
+- **Spike first:** run scip-typescript on the ajudaqui validation-codes module and
+  confirm the 4 same-named `getActiveCode` disambiguate before committing the design.
+- **Exit criteria:** `callers`/`callees` correct on validation-codes (4 `getActiveCode`).
 
 ## M3 — Incremental indexing
 

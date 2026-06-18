@@ -45,16 +45,19 @@ callers/callees), `Snippet` (reads file lines), `Stats`, `ReplaceProject`.
 
 ```
 Discover(root)            file walk; hard-ignores + .cbmignore; language detect
-  → ExtractDefinitions    per-file, in parallel (one goroutine per file, NumCPU)
+  → ExtractDefinitions    per-file, in parallel — tree-sitter AST (treesitter.go)
+  → ResolveImports        IMPORTS edges (TS/JS, relative File→File)
   → ResolveCalls          CALLS edges  [STUB today — see ROADMAP M2]
   → Store.InsertNodes/Edges
 ```
 
-`ExtractDefinitions` is **regex-based today** (a placeholder): it finds Go/TS/JS
-functions, classes, methods and emits `File`/`Function`/`Method`/`Class` nodes +
-`DEFINES` edges. It is fast and zero-dep but scope-blind. tree-sitter replaces it
-(M1). `ResolveCalls` returns nothing yet — the real version is the LSP-delegation
-bet (M2).
+`ExtractDefinitions` (definitions.go + treesitter.go) parses each file with the
+official **tree-sitter** (cgo, one parser per goroutine) and emits `File`/`Function`/
+`Method`/`Class`/`Interface`/`Type`/`Enum`/`Variable` nodes + `DEFINES` edges — with
+real end lines, `is_exported`, and class/method decorators. `ResolveImports`
+(imports.go) resolves relative TS/JS imports to File nodes → `IMPORTS` edges (package
+and unresolved imports drop). `ResolveCalls` is still a stub — the real version is the
+M2 batch-indexer bet (scip-typescript for TS/JS, go/packages+callgraph for Go).
 
 ## Query layer (internal/query)
 
