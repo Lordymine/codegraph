@@ -75,7 +75,11 @@ Store: `~/.cache/codegraph/<project>.db`. Original clonado (shallow) em
 - Go idiomático; pacotes pequenos; erros explícitos.
 - TDD onde fizer sentido (store, query, discover têm contrato testável).
 - Conventional Commits (`tipo(escopo): desc em inglês`). Verificar `go build` +
-  `go vet` + `go test` antes de commitar. Branch por feature, nunca direto na main.
+  `go vet` + `go test` antes de commitar.
+- **Autoria dos commits (regra rígida):** NUNCA adicionar trailer `Co-Authored-By`
+  (nem de IA/Claude). Todo commit parte exclusivamente do usuário
+  `Rafael Oliveira <rafaelkefren@gmail.com>` (travado no git config local). Um hook
+  `commit-msg` remove o trailer automaticamente como reforço.
 - Documentação viva: atualizar `docs/ROADMAP.md` ao fechar milestone e
   `docs/ARCHITECTURE.md` ao mudar design.
 
