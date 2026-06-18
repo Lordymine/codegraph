@@ -16,6 +16,7 @@ import (
 	"github.com/Lordymine/codegraph/internal/graph"
 	"github.com/Lordymine/codegraph/internal/index"
 	"github.com/Lordymine/codegraph/internal/mcp"
+	"github.com/Lordymine/codegraph/internal/quality"
 	"github.com/Lordymine/codegraph/internal/query"
 )
 
@@ -34,6 +35,8 @@ func main() {
 		err = cmdMCP(arg(2, "."))
 	case "bench":
 		err = cmdBench(arg(2, "."))
+	case "quality":
+		err = cmdQuality(os.Args[2:])
 	case "cli":
 		err = cmdCLI(os.Args[2:])
 	case "-h", "--help", "help":
@@ -63,6 +66,8 @@ Usage:
   codegraph stats <path>          Show node/edge counts for a repo
   codegraph mcp   <path>          Serve the graph over MCP (stdio) for a repo
   codegraph bench <path>          Re-index + measure token/tool-call/speed efficiency
+  codegraph quality gen <repo> [outdir] [lang]   Generate the answer-quality question set
+  codegraph quality score <dir>                  Grade filled truth+answers -> report.md
   codegraph cli   <tool> <path> <json>   Run one query tool (search|callers|callees|neighbors|snippet)
 
 Store lives in ~/.cache/codegraph/<project>.db
@@ -219,6 +224,132 @@ func ratioOf(a, b int) float64 {
 		b = 1
 	}
 	return float64(a) / float64(b)
+}
+
+// cmdQuality drives the answer-quality harness:
+//
+//	codegraph quality gen   <repo> [outdir] [lang]   generate the question set
+//	codegraph quality score <dir>                    grade filled truth+answers
+//
+// `gen` writes questions.json (+ truth/answers scaffolds) for the ultracode
+// workflow to fill; `score` reads them back and writes report.md.
+func cmdQuality(args []string) error {
+	if len(args) < 1 {
+		return fmt.Errorf("usage: codegraph quality <gen|score> ...")
+	}
+	switch args[0] {
+	case "gen":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: codegraph quality gen <repo> [outdir] [lang]")
+		}
+		repo := args[1]
+		outdir := "quality-run"
+		if len(args) > 2 {
+			outdir = args[2]
+		}
+		lang := "ts"
+		if len(args) > 3 {
+			lang = args[3]
+		}
+		return cmdQualityGen(repo, outdir, lang)
+	case "score":
+		if len(args) < 2 {
+			return fmt.Errorf("usage: codegraph quality score <dir>")
+		}
+		return cmdQualityScore(args[1])
+	default:
+		return fmt.Errorf("unknown quality subcommand %q", args[0])
+	}
+}
+
+func cmdQualityGen(repo, outdir, lang string) error {
+	st, project, err := openFor(repo)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	// Index on demand so `gen` is self-contained.
+	if n, _, _ := st.Stats(project); n == 0 {
+		if _, err := index.Run(st, repo); err != nil {
+			return err
+		}
+	}
+
+	qs, err := quality.Generate(st, project, lang)
+	if err != nil {
+		return err
+	}
+	if len(qs) == 0 {
+		return fmt.Errorf("no questions generated (is the repo indexed with CALLS edges?)")
+	}
+
+	if err := os.MkdirAll(outdir, 0o755); err != nil {
+		return err
+	}
+	// truth scaffold: one entry per structural question for the oracle to fill.
+	var truth []quality.Truth
+	for _, q := range qs {
+		if q.Type != quality.TypeOpen {
+			truth = append(truth, quality.Truth{ID: q.ID, Notes: "oracle: fill Items independently of the graph"})
+		}
+	}
+	if err := writeJSON(filepath.Join(outdir, "questions.json"), qs); err != nil {
+		return err
+	}
+	if err := writeJSON(filepath.Join(outdir, "truth.json"), truth); err != nil {
+		return err
+	}
+	if err := writeJSON(filepath.Join(outdir, "answers.json"), []quality.Answer{}); err != nil {
+		return err
+	}
+	abs, _ := filepath.Abs(repo)
+	meta := map[string]any{"repo": abs, "project": project, "lang": lang, "questions": len(qs)}
+	if err := writeJSON(filepath.Join(outdir, "meta.json"), meta); err != nil {
+		return err
+	}
+
+	fmt.Printf("generated %d questions for %s -> %s/\n", len(qs), project, outdir)
+	fmt.Printf("  questions.json  the tasks (run the ultracode workflow to fill truth.json + answers.json)\n")
+	fmt.Printf("  then: codegraph quality score %s\n", outdir)
+	return nil
+}
+
+func cmdQualityScore(dir string) error {
+	var qs []quality.Question
+	var truth []quality.Truth
+	var answers []quality.Answer
+	if err := readJSON(filepath.Join(dir, "questions.json"), &qs); err != nil {
+		return err
+	}
+	if err := readJSON(filepath.Join(dir, "truth.json"), &truth); err != nil {
+		return err
+	}
+	if err := readJSON(filepath.Join(dir, "answers.json"), &answers); err != nil {
+		return err
+	}
+	report := quality.Report(qs, truth, answers)
+	if err := os.WriteFile(filepath.Join(dir, "report.md"), []byte(report), 0o644); err != nil {
+		return err
+	}
+	fmt.Print(report)
+	return nil
+}
+
+func writeJSON(path string, v any) error {
+	b, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, b, 0o644)
+}
+
+func readJSON(path string, v any) error {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(b, v)
 }
 
 // cmdCLI: codegraph cli <tool> <path> <json-args>

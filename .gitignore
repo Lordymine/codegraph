@@ -11,3 +11,6 @@
 *.db-wal
 *.db-shm
 /tmp/
+
+# quality-harness run artifacts (repo-specific paths; regenerate with `quality gen`)
+/quality-run/

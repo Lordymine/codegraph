@@ -241,6 +241,58 @@ func (s *Store) TopByInboundCalls(project string, limit int) ([]Node, error) {
 	return out, rows.Err()
 }
 
+// TopByOutboundCalls returns the nodes that call the most other nodes — useful
+// for "what does X call" (callees) benchmark/quality questions.
+func (s *Store) TopByOutboundCalls(project string, limit int) ([]Node, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	q := `SELECT ` + ftsCols("n.") + ` FROM edges e
+		JOIN nodes n ON n.id = e.source_id
+		WHERE e.project=? AND e.type='CALLS'
+		GROUP BY e.source_id
+		ORDER BY COUNT(*) DESC, n.qualified_name ASC
+		LIMIT ?`
+	rows, err := s.db.Query(q, project, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Node
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// SampleByLabel returns a deterministic sample of nodes of a given label
+// (ordered by qualified name) — used to pick "where is X defined" questions.
+func (s *Store) SampleByLabel(project, label string, limit int) ([]Node, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	q := `SELECT ` + nodeCols + ` FROM nodes
+		WHERE project=? AND label=? ORDER BY qualified_name LIMIT ?`
+	rows, err := s.db.Query(q, project, label, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Node
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 // Stats returns node/edge counts for a project.
 func (s *Store) Stats(project string) (nodes, edges int, err error) {
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE project=?`, project).Scan(&nodes)
