@@ -19,10 +19,15 @@ func ResolveCalls(project, root string, files []SourceFile, nodes []graph.Node) 
 	enc := scip.BuildEnclosing(nodes)
 	var edges []graph.Edge
 
-	// TS/JS: scip-typescript per tsconfig subproject.
+	// TS/JS: scip-typescript per tsconfig subproject. dir is repo-relative; "" means
+	// the repo root (a single-package repo whose only tsconfig is at the top).
 	for _, dir := range tsconfigDirs(root) {
 		abs := filepath.Join(root, filepath.FromSlash(dir))
-		out := filepath.Join(os.TempDir(), "codegraph-"+strings.ReplaceAll(dir, "/", "-")+".scip")
+		name := dir
+		if name == "" {
+			name = "root"
+		}
+		out := filepath.Join(os.TempDir(), "codegraph-"+strings.ReplaceAll(name, "/", "-")+".scip")
 		idx, err := scip.RunAndRead(abs, out)
 		if err != nil {
 			continue // best-effort per subproject
@@ -48,11 +53,16 @@ func hasGo(files []SourceFile) bool {
 	return false
 }
 
-// tsconfigDirs finds repo-relative directories (other than the root) that contain
-// a tsconfig.json — the units scip-typescript indexes. node_modules and hidden
-// dirs are skipped.
+// tsconfigDirs finds the repo-relative directories scip-typescript should index,
+// one per tsconfig.json. node_modules and hidden dirs are skipped. Monorepos have
+// their tsconfigs in subprojects (apps/api, packages/x); a single-package repo
+// (e.g. a TS library) has only a root tsconfig — in that case we return [""] to run
+// scip at the root, since otherwise such repos would get zero CALLS edges. When
+// subprojects exist we use them and skip the root (a root solution-style tsconfig
+// would otherwise double-index).
 func tsconfigDirs(root string) []string {
-	var dirs []string
+	var subDirs []string
+	rootHas := false
 	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -65,11 +75,16 @@ func tsconfigDirs(root string) []string {
 		}
 		if d.Name() == "tsconfig.json" {
 			rel, _ := filepath.Rel(root, filepath.Dir(path))
-			if rel = filepath.ToSlash(rel); rel != "." {
-				dirs = append(dirs, rel)
+			if rel = filepath.ToSlash(rel); rel == "." {
+				rootHas = true
+			} else {
+				subDirs = append(subDirs, rel)
 			}
 		}
 		return nil
 	})
-	return dirs
+	if len(subDirs) == 0 && rootHas {
+		return []string{""} // single-package repo: index at the root
+	}
+	return subDirs
 }

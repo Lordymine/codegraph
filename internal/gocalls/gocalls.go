@@ -20,17 +20,26 @@ import (
 // CallEdges loads the Go packages under root and returns CALLS edges whose caller
 // and callee are both known nodes. Best-effort: load errors don't abort (it
 // builds the graph from whatever type-checked).
-func CallEdges(project, root string, known func(qn string) bool) ([]graph.Edge, error) {
+func CallEdges(project, root string, known func(qn string) bool) (edges []graph.Edge, err error) {
+	// golang.org/x/tools can panic on some generic instantiations (a known issue
+	// in ssa RuntimeTypes / ForEachElement, hit by repos like cli/cli). Recover so
+	// a single repo's generics don't abort the whole index — best-effort means no
+	// Go CALLS for that repo rather than a crash. (TODO: a generics-safe call graph.)
+	defer func() {
+		if r := recover(); r != nil {
+			edges, err = nil, nil
+		}
+	}()
+
 	cfg := &packages.Config{Mode: packages.LoadAllSyntax, Dir: root}
-	pkgs, err := packages.Load(cfg, "./...")
-	if err != nil {
-		return nil, err
+	pkgs, loadErr := packages.Load(cfg, "./...")
+	if loadErr != nil {
+		return nil, loadErr
 	}
 	prog, _ := ssautil.AllPackages(pkgs, ssa.InstantiateGenerics)
 	prog.Build()
 	cg := cha.CallGraph(prog)
 
-	var edges []graph.Edge
 	seen := make(map[string]bool)
 	for fn, node := range cg.Nodes {
 		callerQN, ok := funcToQN(fn, project, root)
