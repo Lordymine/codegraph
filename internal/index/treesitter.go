@@ -91,8 +91,10 @@ func walkGoDefs(root *tree_sitter.Node, src []byte, add addFn) {
 }
 
 // walkTSDefs emits top-level TS/JS definitions. An `export_statement` wraps the
-// real declaration and carries the decorator as a sibling field, so we unwrap it
+// real declaration and carries the class decorator as a sibling, so we unwrap it
 // once, record `is_exported`/decorators, then dispatch on the inner declaration.
+// Covers the full TS surface: functions, classes (+abstract), interfaces, type
+// aliases, enums, and top-level variables.
 func walkTSDefs(root *tree_sitter.Node, src []byte, add addFn) {
 	for i := uint(0); i < root.NamedChildCount(); i++ {
 		n := root.NamedChild(i)
@@ -112,13 +114,16 @@ func walkTSDefs(root *tree_sitter.Node, src []byte, add addFn) {
 
 		switch decl.Kind() {
 		case "function_declaration", "generator_function_declaration":
-			name := decl.ChildByFieldName("name")
-			if name == nil {
-				continue
-			}
-			nm := name.Utf8Text(src)
-			add(graph.LabelFunction, nm, nm, decl.StartPosition().Row, decl.EndPosition().Row,
-				tsExtra(exported, nil))
+			emitNamed(decl, src, graph.LabelFunction, tsExtra(exported, nil), add)
+
+		case "interface_declaration":
+			emitNamed(decl, src, graph.LabelInterface, tsExtra(exported, nil), add)
+
+		case "type_alias_declaration":
+			emitNamed(decl, src, graph.LabelType, tsExtra(exported, nil), add)
+
+		case "enum_declaration":
+			emitNamed(decl, src, graph.LabelEnum, tsExtra(exported, nil), add)
 
 		case "class_declaration", "abstract_class_declaration":
 			name := decl.ChildByFieldName("name")
@@ -131,48 +136,72 @@ func walkTSDefs(root *tree_sitter.Node, src []byte, add addFn) {
 			walkTSClassMethods(decl, nm, src, add)
 
 		case "lexical_declaration", "variable_declaration":
-			for j := uint(0); j < decl.NamedChildCount(); j++ {
-				vd := decl.NamedChild(j)
-				if vd.Kind() != "variable_declarator" {
-					continue
-				}
-				val := vd.ChildByFieldName("value")
-				if val == nil {
-					continue
-				}
-				if k := val.Kind(); k != "arrow_function" && k != "function_expression" {
-					continue
-				}
-				name := vd.ChildByFieldName("name")
-				if name == nil {
-					continue
-				}
-				nm := name.Utf8Text(src)
-				add(graph.LabelFunction, nm, nm, decl.StartPosition().Row, decl.EndPosition().Row,
-					tsExtra(exported, nil))
-			}
+			walkTSVariableDecls(decl, src, exported, add)
 		}
 	}
 }
 
+// emitNamed adds a node for a declaration that exposes a `name` field.
+func emitNamed(decl *tree_sitter.Node, src []byte, label graph.NodeLabel, extra map[string]any, add addFn) {
+	name := decl.ChildByFieldName("name")
+	if name == nil {
+		return
+	}
+	nm := name.Utf8Text(src)
+	add(label, nm, nm, decl.StartPosition().Row, decl.EndPosition().Row, extra)
+}
+
+// walkTSVariableDecls emits a node per top-level binding: Function when the value
+// is an arrow/function expression, Variable otherwise (configs, schemas, consts).
+func walkTSVariableDecls(decl *tree_sitter.Node, src []byte, exported bool, add addFn) {
+	for j := uint(0); j < decl.NamedChildCount(); j++ {
+		vd := decl.NamedChild(j)
+		if vd.Kind() != "variable_declarator" {
+			continue
+		}
+		name := vd.ChildByFieldName("name")
+		if name == nil {
+			continue
+		}
+		nm := name.Utf8Text(src)
+		label := graph.LabelVariable
+		if val := vd.ChildByFieldName("value"); val != nil {
+			if k := val.Kind(); k == "arrow_function" || k == "function_expression" {
+				label = graph.LabelFunction
+			}
+		}
+		add(label, nm, nm, decl.StartPosition().Row, decl.EndPosition().Row, tsExtra(exported, nil))
+	}
+}
+
 // walkTSClassMethods emits Method nodes for a class body, qualified by the class
-// name so methods of different classes don't collide.
+// name so methods of different classes don't collide. Method decorators are
+// sibling nodes that PRECEDE the method in the body, so we accumulate pending
+// decorators and attach them to the next method (NestJS @Get/@Post, etc).
 func walkTSClassMethods(class *tree_sitter.Node, className string, src []byte, add addFn) {
 	body := class.ChildByFieldName("body")
 	if body == nil {
 		return
 	}
+	var pending []string
 	for j := uint(0); j < body.NamedChildCount(); j++ {
 		m := body.NamedChild(j)
-		if m.Kind() != "method_definition" {
-			continue
+		switch m.Kind() {
+		case "decorator":
+			pending = append(pending, decoratorName(m, src))
+		case "method_definition", "abstract_method_signature":
+			if name := m.ChildByFieldName("name"); name != nil {
+				mn := name.Utf8Text(src)
+				var extra map[string]any
+				if len(pending) > 0 {
+					extra = map[string]any{"decorators": pending}
+				}
+				add(graph.LabelMethod, mn, className+"."+mn, m.StartPosition().Row, m.EndPosition().Row, extra)
+			}
+			pending = nil
+		default:
+			pending = nil // field/other member — don't leak decorators forward
 		}
-		name := m.ChildByFieldName("name")
-		if name == nil {
-			continue
-		}
-		mn := name.Utf8Text(src)
-		add(graph.LabelMethod, mn, className+"."+mn, m.StartPosition().Row, m.EndPosition().Row, nil)
 	}
 }
 

@@ -10,13 +10,16 @@ package graph
 type NodeLabel string
 
 const (
-	LabelFile     NodeLabel = "File"
-	LabelModule   NodeLabel = "Module"
-	LabelFunction NodeLabel = "Function"
-	LabelMethod   NodeLabel = "Method"
-	LabelClass    NodeLabel = "Class"
-	LabelVariable NodeLabel = "Variable"
-	LabelRoute    NodeLabel = "Route" // HTTP endpoint (later pass)
+	LabelFile      NodeLabel = "File"
+	LabelModule    NodeLabel = "Module"
+	LabelFunction  NodeLabel = "Function"
+	LabelMethod    NodeLabel = "Method"
+	LabelClass     NodeLabel = "Class"
+	LabelInterface NodeLabel = "Interface" // TS interface
+	LabelType      NodeLabel = "Type"      // TS type alias
+	LabelEnum      NodeLabel = "Enum"      // TS enum
+	LabelVariable  NodeLabel = "Variable"  // exported/top-level binding
+	LabelRoute     NodeLabel = "Route"     // HTTP endpoint (later pass)
 )
 
 // EdgeType is the kind of a relationship between two nodes. The MVP only emits
