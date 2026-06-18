@@ -61,7 +61,8 @@ func Run(store *graph.Store, root string) (Result, error) {
 		allEdges = append(allEdges, r.edges...)
 	}
 
-	// folder -> file containment + (future) call edges.
+	// IMPORTS edges (TS/JS) + (future) CALLS edges.
+	allEdges = append(allEdges, ResolveImports(project, files)...)
 	allEdges = append(allEdges, ResolveCalls(project, files)...)
 
 	if err := store.InsertNodes(allNodes); err != nil {
