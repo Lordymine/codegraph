@@ -1,0 +1,13 @@
+# reference clone of the upstream project — not part of our repo
+/_upstream/
+
+# binaries
+/codegraph
+/codegraph.exe
+*.exe
+
+# local graph stores / scratch
+*.db
+*.db-wal
+*.db-shm
+/tmp/
