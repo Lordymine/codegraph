@@ -53,17 +53,54 @@ different classes therefore collapse together — an accepted approximation.
 `codegraph quality score` then computes F1 for structural answers, ingests the
 judge scores for open ones, and emits the comparison table.
 
+## Results — ajuda-aqui (14 questions, run via the ultracode workflow)
+
+47 agents: an independent oracle per question, a graph-only and a grep-only
+responder per question, and a judge for the open ones.
+
+| mode | mean quality | tokens | tool calls |
+|---|--:|--:|--:|
+| **graph** | **89%** | 14,228 | 22 |
+| **baseline** (grep) | **87%** | 115,645 | 166 |
+
+| by type | callers | callees | definition | open |
+|---|--:|--:|--:|--:|
+| graph | 100% | 65% | 100% | 75% |
+| baseline | 99% | 39% | 100% | 100% |
+
+**The honest finding is not "graph is more correct" — it is "graph is as correct,
+≈8× cheaper."** A careful grep agent matches the graph on structural questions, but
+pays ~8× the tokens and ~7.5× the tool calls to do it (e.g. "who calls Button":
+graph = 1 call, the grep agent opened 20+ files). Two genuine quality differences:
+
+- **Callees: graph wins (65% vs 39%).** Deciding whether a call is "direct" or
+  nested inside a callback is exactly the type-resolution work humans/agents get
+  wrong by hand; the type checker doesn't. (Both scores are depressed because the
+  oracle's *strict* "direct in body only" rule excludes `useCallback`/`.map`
+  callback calls that both the graph and the agents include — callees F1 is
+  sensitive to that definition; the *gap* is the signal, not the absolute.)
+- **Open comprehension: baseline wins (100% vs 75%).** Compact refs carry structure,
+  not intent — explaining *what a symbol is for* is where reading the code wins.
+  This is the upstream's "graph trades quality for tokens", reproduced.
+
+## A scorer bug we caught (and why the split harness matters)
+
+The first scoring run reported baseline callers at **32%** — four questions at 0%.
+That was a *scorer* artifact, not a baseline failure: responders append the location
+(`Name (file.tsx:29)`), and `normName` was taking the last `:`-segment — the line
+number `29`, not `Name`. Fixed (strip the annotation first; regression-tested), and
+re-scored the SAME `truth.json`/`answers.json` **without re-running the 47 agents** —
+the payoff of separating data generation from grading. Corrected baseline callers:
+**99%**. Lesson worth keeping: a benchmark that flatters your tool by *miscounting
+the baseline* is worse than none — verify the surprising number before believing it.
+
 ## Reading the result honestly
 
-- **Structural questions favor the graph** — it encodes exactly that call structure
-  (type-checker-derived). The honest finding there is the *cost gap*: the baseline
-  may reach similar quality but pays the token/tool-call bill `docs/BENCHMARK.md`
-  quantifies.
-- **Open questions are where the graph is weakest** — compact refs don't explain
-  intent. This is where the upstream's "graph trades ~9 quality points for ~10×
-  tokens" shows up, and where we expect the baseline to hold its own.
 - We publish whatever the run says. A harness that can only flatter the graph isn't
-  a harness.
+  a harness — see the bug above.
+- Self-reported tokens are agent estimates; the **authoritative** token numbers are
+  the deterministic ones in `docs/BENCHMARK.md` (16× window). Tool calls here are
+  counted, so trust those.
 
 ## Output files (in `outdir`, gitignored)
 

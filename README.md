@@ -144,10 +144,12 @@ replacement**:
   resolve them, so the edge is honestly dropped — the graph won't see those calls.
 - **Stale between re-indexes.** The graph is a snapshot; incremental re-index by
   file hash is the next milestone (M3).
-- **Answer *quality* is not yet self-measured.** The upstream paper reports 83% vs a
-  92% file-by-file baseline — a real token/quality trade-off. We do **not** publish a
-  quality number we can't yet measure rigorously (it needs an LLM-as-judge harness).
-  We publish only the deterministic numbers above.
+- **Answer quality is now self-measured — honestly.** A separate harness
+  (`docs/QUALITY.md`) pits a graph-only agent against a grep-only one, graded against
+  an independent oracle. On ajuda-aqui: **89% vs 87% quality at ~8× fewer tokens and
+  ~7.5× fewer tool calls** — the graph matches a careful grep agent's correctness far
+  more cheaply, wins on call resolution, and *loses* on open comprehension (refs
+  carry structure, not intent). One repo so far; the paper needs N.
 
 Use it for **map / understand / who-calls / disambiguate / cut tokens.**
 
@@ -164,8 +166,8 @@ after the engineering clears a hard bar:
       wire format (keys once, project prefix stripped) that ~halved graph-side tokens.
 - [ ] **M3** — incremental re-index by file hash (kills the 30 s on unchanged repos).
 - [ ] **M4** — `SIMILAR_TO` via MinHash/LSH; **M5** — `get_architecture`, MCP polish.
-- [ ] **Quality harness** — LLM-as-judge over N repos, to report our own answer-quality
-      number honestly.
+- [x] **Quality harness** — built + first run (89% vs 87% baseline at ~8× less cost on
+      ajuda-aqui; `docs/QUALITY.md`). Remaining for the paper: scale to N repos.
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full plan and open questions.
 

@@ -32,6 +32,24 @@ func TestNormNameFoldsQualifiers(t *testing.T) {
 	}
 }
 
+// Regression: responders append a (file:line) or @ location annotation after the
+// name. The line number must NOT be mistaken for the symbol (that scored real
+// answers as 0%). The name is what counts.
+func TestNormNameStripsLocationAnnotations(t *testing.T) {
+	cases := map[string]string{
+		"ForgotPasswordScreen (apps/mobile/app/(auth)/forgot-password.tsx:29)": "forgotpasswordscreen",
+		"RegisterPage @ apps/admin/src/app/(auth)/register/page.tsx:23":        "registerpage",
+		"apps/admin/src/components/ui/button.tsx:Button":                       "button",
+		"CatalogPage":                                                          "catalogpage",
+		"MoneyField (extra-section.tsx:152)":                                   "moneyfield",
+	}
+	for in, want := range cases {
+		if got := normName(in); got != want {
+			t.Fatalf("normName(%q)=%q want %q", in, got, want)
+		}
+	}
+}
+
 func TestMatchDefinition(t *testing.T) {
 	truth := []string{"src/foo/bar.ts:42"}
 	if !matchDefinition([]string{"src/foo/bar.ts:43"}, truth) { // within ±3

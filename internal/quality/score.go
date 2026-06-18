@@ -112,19 +112,49 @@ func toSet(xs []string) map[string]bool {
 	return s
 }
 
-// normName reduces a symbol reference to its last identifier, lowercased, so
-// "ValidationCodesService.getActiveCode", "service.getActiveCode()" and
-// "getActiveCode" all compare equal. (Collisions between same-named methods in
-// different classes are folded together — an accepted approximation, noted in
+// normName reduces a symbol reference to its bare identifier, lowercased, so the
+// many shapes agents emit all compare equal:
+//
+//	getActiveCode
+//	Service.getActiveCode            ->  getactivecode
+//	x.getActiveCode()                ->  getactivecode
+//	path/file.tsx:Button             ->  button         (name after the path)
+//	Name (path/file.tsx:42)          ->  name           (trailing location annotation)
+//	Name @ path/file.tsx:42          ->  name
+//
+// Crucial: the trailing-annotation forms must be stripped FIRST, otherwise the
+// last ':' segment is a LINE NUMBER, not the name. (Collisions between same-named
+// methods in different files fold together — an accepted approximation, see
 // docs/QUALITY.md.)
 func normName(s string) string {
 	s = strings.TrimSpace(s)
-	s = strings.TrimSuffix(s, "()")
-	if i := strings.LastIndexAny(s, "./:#\\"); i >= 0 {
+	// 1) drop any trailing location annotation the responder appended.
+	for _, sep := range []string{" (", " @ ", " -> ", " => ", " - ", "\t"} {
+		if i := strings.Index(s, sep); i >= 0 {
+			s = s[:i]
+		}
+	}
+	s = strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(s), "()"))
+	// 2) "path/file.tsx:Name" -> "Name" (only when the tail is an identifier, not
+	// a line number). Without a path, still split a trailing "file:Name".
+	if c := strings.LastIndex(s, ":"); c >= 0 && isIdentStart(s[c+1:]) {
+		s = s[c+1:]
+	}
+	// 3) "Owner.method" -> "method".
+	if i := strings.LastIndex(s, "."); i >= 0 {
 		s = s[i+1:]
 	}
 	s = strings.TrimSuffix(s, "()")
 	return strings.ToLower(strings.TrimSpace(s))
+}
+
+func isIdentStart(s string) bool {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return false
+	}
+	b := s[0]
+	return b == '_' || b == '$' || (b >= 'a' && b <= 'z') || (b >= 'A' && b <= 'Z')
 }
 
 // matchDefinition is true if the answer points at the same file (by basename)
