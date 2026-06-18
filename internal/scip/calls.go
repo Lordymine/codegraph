@@ -9,9 +9,11 @@ import (
 )
 
 // Enclosing maps a call-site (repo-relative file + 1-based line) to the qualified
-// name of the function/method that contains it — i.e. the caller.
+// name of the function/method that contains it — i.e. the caller — and reports
+// whether a qualified name is a known call target.
 type Enclosing interface {
 	At(relpath string, line int) (qn string, ok bool)
+	Has(qn string) bool
 }
 
 // CallEdges turns SCIP reference occurrences into CALLS edges: callee = the
@@ -32,8 +34,8 @@ func CallEdges(index *scippb.Index, project, pathPrefix string, enc Enclosing) [
 				continue
 			}
 			calleeQN, ok := symbolToQN(occ.GetSymbol(), project, pathPrefix)
-			if !ok {
-				continue
+			if !ok || !enc.Has(calleeQN) {
+				continue // external/unknown target — drop the candidate up front
 			}
 			r := occ.GetRange()
 			if len(r) == 0 {
@@ -50,7 +52,8 @@ func CallEdges(index *scippb.Index, project, pathPrefix string, enc Enclosing) [
 			seen[key] = true
 			edges = append(edges, graph.Edge{
 				Project: project, SourceQN: callerQN, TargetQN: calleeQN,
-				Type: graph.EdgeCalls, Props: map[string]any{"resolver": "scip"},
+				Type:  graph.EdgeCalls,
+				Props: map[string]any{"resolver": "scip", "confidence": "high"},
 			})
 		}
 	}
@@ -77,9 +80,11 @@ func joinPath(prefix, rel string) string {
 }
 
 // EnclosingNodes is an Enclosing built from graph nodes: for a (file, line) it
-// returns the innermost Function/Method node whose line span contains it.
+// returns the innermost Function/Method node whose line span contains it, and
+// tracks all Function/Method QNs as the set of valid call targets.
 type EnclosingNodes struct {
 	byFile map[string][]nodeSpan
+	qns    map[string]bool
 }
 
 type nodeSpan struct {
@@ -87,17 +92,22 @@ type nodeSpan struct {
 	qn         string
 }
 
-// BuildEnclosing indexes Function/Method nodes by file for caller lookup.
+// BuildEnclosing indexes Function/Method nodes by file for caller lookup and by
+// QN for callee validation.
 func BuildEnclosing(nodes []graph.Node) *EnclosingNodes {
-	e := &EnclosingNodes{byFile: make(map[string][]nodeSpan)}
+	e := &EnclosingNodes{byFile: make(map[string][]nodeSpan), qns: make(map[string]bool)}
 	for _, n := range nodes {
 		if n.Label != graph.LabelFunction && n.Label != graph.LabelMethod {
 			continue
 		}
 		e.byFile[n.FilePath] = append(e.byFile[n.FilePath], nodeSpan{n.StartLine, n.EndLine, n.QualifiedName})
+		e.qns[n.QualifiedName] = true
 	}
 	return e
 }
+
+// Has reports whether qn is a known function/method node (a valid call target).
+func (e *EnclosingNodes) Has(qn string) bool { return e.qns[qn] }
 
 func (e *EnclosingNodes) At(relpath string, line int) (string, bool) {
 	best, bestSize := "", 1<<30

@@ -31,6 +31,9 @@ func TestCallEdges_ControllerCallsService(t *testing.T) {
 
 	enc := BuildEnclosing([]graph.Node{
 		{Label: graph.LabelMethod, FilePath: ctrlFile, StartLine: 60, EndLine: 70, QualifiedName: ctrlQN},
+		// the Service method must exist as a known call target
+		{Label: graph.LabelMethod, FilePath: "apps/api/src/validation-codes/validation-codes.service.ts",
+			StartLine: 179, EndLine: 210, QualifiedName: svcQN},
 	})
 
 	edges := CallEdges(idx, "proj", "apps/api", enc)

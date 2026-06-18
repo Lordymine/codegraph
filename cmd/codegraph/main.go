@@ -140,10 +140,17 @@ func cmdCLI(args []string) error {
 		raw = args[2]
 	}
 	var a struct {
-		Query, Label, QualifiedName, File string
-		StartLine, EndLine, Limit         int
+		Query         string `json:"query"`
+		Label         string `json:"label"`
+		QualifiedName string `json:"qualified_name"`
+		File          string `json:"file"`
+		StartLine     int    `json:"start_line"`
+		EndLine       int    `json:"end_line"`
+		Limit         int    `json:"limit"`
 	}
-	_ = json.Unmarshal([]byte(raw), &a)
+	if err := json.Unmarshal([]byte(raw), &a); err != nil {
+		return fmt.Errorf("bad json args: %w", err)
+	}
 
 	root, _ = filepath.Abs(root)
 	st, project, err := openFor(root)

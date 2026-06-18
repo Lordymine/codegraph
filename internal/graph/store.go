@@ -143,39 +143,67 @@ func (s *Store) InsertNodes(nodes []Node) error {
 }
 
 // InsertEdges resolves source/target qualified names to node IDs and inserts.
-// Edges whose endpoints don't exist (unresolved calls) are silently dropped —
-// that's expected until the call-resolution pass is real.
+// QN→id resolution is done once in memory (was one correlated subquery per edge —
+// O(edges) two-table lookups). Edges whose endpoints don't exist are dropped.
 func (s *Store) InsertEdges(edges []Edge) (inserted, dropped int, err error) {
+	if len(edges) == 0 {
+		return 0, 0, nil
+	}
+
+	// Load QN→id once. Qualified names already carry the project prefix, so they
+	// are globally unique; no per-project filter needed.
+	idByQN := make(map[string]int64)
+	rows, err := s.db.Query(`SELECT qualified_name, id FROM nodes`)
+	if err != nil {
+		return 0, 0, err
+	}
+	for rows.Next() {
+		var qn string
+		var id int64
+		if err := rows.Scan(&qn, &id); err != nil {
+			rows.Close()
+			return 0, 0, err
+		}
+		idByQN[qn] = id
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, 0, err
+	}
+
 	tx, err := s.db.Begin()
 	if err != nil {
 		return 0, 0, err
 	}
 	defer tx.Rollback()
 
-	ins, err := tx.Prepare(`INSERT OR IGNORE INTO edges(project,source_id,target_id,type,properties)
-		SELECT ?, s.id, t.id, ?, ?
-		FROM nodes s, nodes t
-		WHERE s.project=? AND s.qualified_name=? AND t.project=? AND t.qualified_name=?`)
+	ins, err := tx.Prepare(`INSERT OR IGNORE INTO edges(project,source_id,target_id,type,properties) VALUES (?,?,?,?,?)`)
 	if err != nil {
 		return 0, 0, err
 	}
 	defer ins.Close()
 
 	for _, e := range edges {
+		sid, ok1 := idByQN[e.SourceQN]
+		tid, ok2 := idByQN[e.TargetQN]
+		if !ok1 || !ok2 {
+			dropped++
+			continue
+		}
 		props := "{}"
 		if len(e.Props) > 0 {
 			if b, err := json.Marshal(e.Props); err == nil {
 				props = string(b)
 			}
 		}
-		res, err := ins.Exec(e.Project, string(e.Type), props, e.Project, e.SourceQN, e.Project, e.TargetQN)
+		res, err := ins.Exec(e.Project, sid, tid, string(e.Type), props)
 		if err != nil {
 			return 0, 0, err
 		}
 		if aff, _ := res.RowsAffected(); aff > 0 {
 			inserted++
 		} else {
-			dropped++
+			dropped++ // duplicate (unique constraint)
 		}
 	}
 	if err := tx.Commit(); err != nil {

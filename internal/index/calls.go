@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/Lordymine/codegraph/internal/gocalls"
 	"github.com/Lordymine/codegraph/internal/graph"
 	"github.com/Lordymine/codegraph/internal/scip"
 )
@@ -17,6 +18,8 @@ import (
 func ResolveCalls(project, root string, files []SourceFile, nodes []graph.Node) []graph.Edge {
 	enc := scip.BuildEnclosing(nodes)
 	var edges []graph.Edge
+
+	// TS/JS: scip-typescript per tsconfig subproject.
 	for _, dir := range tsconfigDirs(root) {
 		abs := filepath.Join(root, filepath.FromSlash(dir))
 		out := filepath.Join(os.TempDir(), "codegraph-"+strings.ReplaceAll(dir, "/", "-")+".scip")
@@ -26,7 +29,23 @@ func ResolveCalls(project, root string, files []SourceFile, nodes []graph.Node) 
 		}
 		edges = append(edges, scip.CallEdges(idx, project, dir, enc)...)
 	}
+
+	// Go: in-process go/packages + CHA call graph.
+	if hasGo(files) {
+		if goEdges, err := gocalls.CallEdges(project, root, enc.Has); err == nil {
+			edges = append(edges, goEdges...)
+		}
+	}
 	return edges
+}
+
+func hasGo(files []SourceFile) bool {
+	for _, f := range files {
+		if f.Lang == LangGo {
+			return true
+		}
+	}
+	return false
 }
 
 // tsconfigDirs finds repo-relative directories (other than the root) that contain

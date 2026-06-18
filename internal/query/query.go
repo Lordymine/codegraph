@@ -51,23 +51,23 @@ func (e *Engine) Search(q, label string, limit int) ([]Ref, error) {
 	return refs, nil
 }
 
-// Callers: who references this symbol (inbound edges).
+// Callers: who calls this symbol (inbound CALLS edges only).
 func (e *Engine) Callers(qualifiedName string, limit int) ([]Ref, error) {
-	return e.neighbors(qualifiedName, "in", limit)
+	return e.neighbors(qualifiedName, "in", "CALLS", limit)
 }
 
-// Callees: what this symbol references (outbound edges).
+// Callees: what this symbol calls (outbound CALLS edges only).
 func (e *Engine) Callees(qualifiedName string, limit int) ([]Ref, error) {
-	return e.neighbors(qualifiedName, "out", limit)
+	return e.neighbors(qualifiedName, "out", "CALLS", limit)
 }
 
-// Neighbors: both directions.
+// Neighbors: all related nodes, any edge type, both directions.
 func (e *Engine) Neighbors(qualifiedName string, limit int) ([]Ref, error) {
-	return e.neighbors(qualifiedName, "both", limit)
+	return e.neighbors(qualifiedName, "both", "", limit)
 }
 
-func (e *Engine) neighbors(qn, dir string, limit int) ([]Ref, error) {
-	ns, err := e.store.Neighbors(e.project, qn, dir, "", limit)
+func (e *Engine) neighbors(qn, dir, edgeType string, limit int) ([]Ref, error) {
+	ns, err := e.store.Neighbors(e.project, qn, dir, edgeType, limit)
 	if err != nil {
 		return nil, err
 	}
