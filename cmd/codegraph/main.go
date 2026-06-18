@@ -252,16 +252,26 @@ func cmdCLI(args []string) error {
 	defer st.Close()
 	eng := query.NewEngine(st, project, root)
 
-	var out any
+	// Ref-returning tools print the compact wire format (one TSV line per ref);
+	// snippet prints raw source. Both are already token-minimal — no JSON wrapper.
+	var out string
 	switch tool {
 	case "search":
-		out, err = eng.Search(a.Query, a.Label, a.Limit)
+		var refs []query.Ref
+		refs, err = eng.Search(a.Query, a.Label, a.Limit)
+		out = query.CompactRefs(refs)
 	case "callers":
-		out, err = eng.Callers(a.QualifiedName, a.Limit)
+		var refs []query.Ref
+		refs, err = eng.Callers(a.QualifiedName, a.Limit)
+		out = query.CompactRefs(refs)
 	case "callees":
-		out, err = eng.Callees(a.QualifiedName, a.Limit)
+		var refs []query.Ref
+		refs, err = eng.Callees(a.QualifiedName, a.Limit)
+		out = query.CompactRefs(refs)
 	case "neighbors":
-		out, err = eng.Neighbors(a.QualifiedName, a.Limit)
+		var refs []query.Ref
+		refs, err = eng.Neighbors(a.QualifiedName, a.Limit)
+		out = query.CompactRefs(refs)
 	case "snippet":
 		out, err = eng.Snippet(a.File, a.StartLine, a.EndLine)
 	default:
@@ -270,7 +280,6 @@ func cmdCLI(args []string) error {
 	if err != nil {
 		return err
 	}
-	b, _ := json.MarshalIndent(out, "", "  ")
-	fmt.Println(string(b))
+	fmt.Print(out)
 	return nil
 }

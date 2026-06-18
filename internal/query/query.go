@@ -7,6 +7,9 @@
 package query
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/Lordymine/codegraph/internal/graph"
 )
 
@@ -25,6 +28,39 @@ func refOf(n graph.Node) Ref {
 		Name: n.Name, QualifiedName: n.QualifiedName, Label: string(n.Label),
 		File: n.FilePath, StartLine: n.StartLine, EndLine: n.EndLine,
 	}
+}
+
+// CompactRefs renders refs as the token-efficient wire format: one tab-separated
+// line per ref — `label<TAB>name<TAB>file:line<TAB>qn`. No repeated JSON keys, and
+// the project prefix is stripped from the qualified name (the engine re-adds it on
+// input, so a returned qn can be passed straight back to callers/callees). This is
+// the format the MCP/CLI tools return AND the format the benchmark meters, so the
+// reported token win reflects the real product, not a measurement trick.
+func CompactRefs(refs []Ref) string {
+	var b strings.Builder
+	for _, r := range refs {
+		b.WriteString(r.Label)
+		b.WriteByte('\t')
+		b.WriteString(r.Name)
+		b.WriteByte('\t')
+		b.WriteString(r.File)
+		b.WriteByte(':')
+		b.WriteString(strconv.Itoa(r.StartLine))
+		b.WriteByte('\t')
+		b.WriteString(StripProjectPrefix(r.QualifiedName))
+		b.WriteByte('\n')
+	}
+	return b.String()
+}
+
+// StripProjectPrefix drops the `project:` prefix from a qualified name. The rest
+// is still globally unambiguous within a project, so it round-trips through
+// normalizeQN on the next query.
+func StripProjectPrefix(qn string) string {
+	if _, rest, found := strings.Cut(qn, ":"); found {
+		return rest
+	}
+	return qn
 }
 
 // Engine wraps a store + repo root for a single project.
@@ -66,8 +102,18 @@ func (e *Engine) Neighbors(qualifiedName string, limit int) ([]Ref, error) {
 	return e.neighbors(qualifiedName, "both", "", limit)
 }
 
+// normalizeQN lets callers pass a qualified name with or without the project
+// prefix — the compact wire format strips it, so a returned qn comes back short.
+func (e *Engine) normalizeQN(qn string) string {
+	prefix := e.project + ":"
+	if strings.HasPrefix(qn, prefix) {
+		return qn
+	}
+	return prefix + qn
+}
+
 func (e *Engine) neighbors(qn, dir, edgeType string, limit int) ([]Ref, error) {
-	ns, err := e.store.Neighbors(e.project, qn, dir, edgeType, limit)
+	ns, err := e.store.Neighbors(e.project, e.normalizeQN(qn), dir, edgeType, limit)
 	if err != nil {
 		return nil, err
 	}

@@ -23,14 +23,14 @@ reproducible with `codegraph bench <repo>`:
 
 | | codegraph | grep-driven agent | upstream (paper) |
 |---|--:|--:|--:|
-| **Tokens** to answer "who calls X" | **1×** | 8.8×–40.8× | 10× |
+| **Tokens** to answer "who calls X" | **1×** | 16×–74× | 10× |
 | **Tool calls** to answer it | **1** | up to 73 (avg 34×) | 2.1× |
-| **Index time** | **33 s** | — | ~20 min¹ |
+| **Index time** | **30 s** | — | ~20 min¹ |
 | **Call-edge accuracy** | type-checker-grade | n/a | "Hybrid LSP" (re-implemented) |
 
-> **8.8× fewer tokens** against a *conservative* baseline (agent reads only a
-> ±10-line window around each grep hit); **40.8×** against the common one (agent
-> reads whole files); **114×** best-case. The conservative number is the one to
+> **16× fewer tokens** against a *conservative* baseline (agent reads only a
+> ±10-line window around each grep hit); **74×** against the common one (agent
+> reads whole files); **206×** best-case. The conservative number is the one to
 > trust — see [Methodology](docs/BENCHMARK.md).
 
 ¹ Upstream's ~20 min / 969 files on Windows; the gap is the on-device embedding
@@ -53,15 +53,19 @@ moves with direction instead of searching blind.**
 ## The idea
 
 Index the repo into a tiny graph — **two tables** (`nodes`, `edges`) + an FTS5
-index — and make every query return a **compact reference**, never source:
+index — and make every query return a **compact reference**, never source. One
+tab-separated line per result, no JSON overhead, project prefix stripped:
 
 ```
-name + qualified_name + label + file + line
+label   name           file:line                    qualified_name
+Method  getActiveCode  …/validation-codes.service.ts:64   …service.ts.ValidationCodesService.getActiveCode
 ```
 
-The agent reads actual code only when it deliberately asks for a `snippet`. That
-selectivity *is* the token saving. The graph's job is to answer "who/what/where"
-structurally and hand back the smallest pointer that resolves it.
+The agent reads actual code only when it deliberately asks for a `snippet`, and a
+returned `qualified_name` feeds straight back into `callers`/`callees`. That
+selectivity *is* the token saving — halving this representation doubled our token
+win (see [BENCHMARK](docs/BENCHMARK.md)). The graph's job is to answer
+"who/what/where" structurally and hand back the smallest pointer that resolves it.
 
 ## The bet that makes it cheap and accurate
 
@@ -155,10 +159,10 @@ after the engineering clears a hard bar:
 
 - [x] **M0–M2** — graph, tree-sitter definitions, type-checker-delegated CALLS,
       benchmark harness.
-- [ ] **≥15× token efficiency on the conservative (window) baseline** — the paper's
-      gate. We're at **8.8×**; the path is a tighter compact-ref wire format (the
-      current JSON repeats keys per row) and edge-set pruning. No paper before the bar.
-- [ ] **M3** — incremental re-index by file hash (kills the 33 s on unchanged repos).
+- [x] **≥15× token efficiency on the conservative (window) baseline** — the paper's
+      gate. **Cleared: 16.0× total / 15.3× median** on ajuda-aqui, via a compact TSV
+      wire format (keys once, project prefix stripped) that ~halved graph-side tokens.
+- [ ] **M3** — incremental re-index by file hash (kills the 30 s on unchanged repos).
 - [ ] **M4** — `SIMILAR_TO` via MinHash/LSH; **M5** — `get_architecture`, MCP polish.
 - [ ] **Quality harness** — LLM-as-judge over N repos, to report our own answer-quality
       number honestly.

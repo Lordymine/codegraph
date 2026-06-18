@@ -17,7 +17,6 @@
 package bench
 
 import (
-	"encoding/json"
 	"os"
 	"sort"
 	"strings"
@@ -155,8 +154,9 @@ func graphCost(eng *query.Engine, q Question) (Cost, int, error) {
 	if err != nil {
 		return Cost{}, 0, err
 	}
-	b, _ := json.Marshal(refs)
-	return Cost{Tokens: EstimateTokens(string(b)), Calls: 1}, len(refs), nil
+	// Meter the SAME compact wire format the MCP/CLI tools actually return, so the
+	// reported ratio reflects the real product, not a measurement trick.
+	return Cost{Tokens: EstimateTokens(query.CompactRefs(refs)), Calls: 1}, len(refs), nil
 }
 
 // RunOne benchmarks a single question across all three strategies.

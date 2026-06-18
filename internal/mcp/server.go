@@ -110,21 +110,33 @@ func (s *Server) callTool(req rpcRequest) {
 	}
 	_ = json.Unmarshal(p.Arguments, &args)
 
+	// Ref-returning tools emit the compact wire format (one TSV line per ref:
+	// label<TAB>name<TAB>file:line<TAB>qn); snippet emits raw source. We never
+	// JSON-wrap the result — that wrapper is exactly the token overhead the
+	// compact format exists to avoid.
 	var (
-		result any
-		err    error
+		text string
+		err  error
 	)
 	switch p.Name {
 	case "search":
-		result, err = s.eng.Search(args.Query, args.Label, args.Limit)
+		var refs []query.Ref
+		refs, err = s.eng.Search(args.Query, args.Label, args.Limit)
+		text = query.CompactRefs(refs)
 	case "callers":
-		result, err = s.eng.Callers(args.QualifiedName, args.Limit)
+		var refs []query.Ref
+		refs, err = s.eng.Callers(args.QualifiedName, args.Limit)
+		text = query.CompactRefs(refs)
 	case "callees":
-		result, err = s.eng.Callees(args.QualifiedName, args.Limit)
+		var refs []query.Ref
+		refs, err = s.eng.Callees(args.QualifiedName, args.Limit)
+		text = query.CompactRefs(refs)
 	case "neighbors":
-		result, err = s.eng.Neighbors(args.QualifiedName, args.Limit)
+		var refs []query.Ref
+		refs, err = s.eng.Neighbors(args.QualifiedName, args.Limit)
+		text = query.CompactRefs(refs)
 	case "snippet":
-		result, err = s.eng.Snippet(args.File, args.StartLine, args.EndLine)
+		text, err = s.eng.Snippet(args.File, args.StartLine, args.EndLine)
 	default:
 		s.fail(req.ID, -32602, "unknown tool: "+p.Name)
 		return
@@ -133,10 +145,8 @@ func (s *Server) callTool(req rpcRequest) {
 		s.fail(req.ID, -32000, err.Error())
 		return
 	}
-	// MCP tool results are content arrays; JSON-encode the structured payload.
-	payload, _ := json.Marshal(result)
 	s.reply(req.ID, map[string]any{
-		"content": []map[string]any{{"type": "text", "text": string(payload)}},
+		"content": []map[string]any{{"type": "text", "text": text}},
 	})
 }
 
@@ -150,13 +160,13 @@ func toolSpecs() []map[string]any {
 		}
 	}
 	return []map[string]any{
-		spec("search", "Ranked BM25 symbol search. Returns compact refs (name+file+line), not code.",
+		spec("search", "Ranked BM25 symbol search. Returns compact refs, not code — one TSV line per hit: label<TAB>name<TAB>file:line<TAB>qualified_name. Pass a returned qualified_name straight to callers/callees.",
 			map[string]any{"query": str, "label": str, "limit": num}, "query"),
-		spec("callers", "Inbound references to a symbol (who uses it).",
+		spec("callers", "Inbound references to a symbol (who uses it). Returns TSV refs (see search). Accepts a qualified_name with or without the project prefix.",
 			map[string]any{"qualified_name": str, "limit": num}, "qualified_name"),
-		spec("callees", "Outbound references from a symbol (what it uses).",
+		spec("callees", "Outbound references from a symbol (what it uses). Returns TSV refs (see search).",
 			map[string]any{"qualified_name": str, "limit": num}, "qualified_name"),
-		spec("neighbors", "Both inbound and outbound neighbors of a symbol.",
+		spec("neighbors", "Both inbound and outbound neighbors of a symbol. Returns TSV refs (see search).",
 			map[string]any{"qualified_name": str, "limit": num}, "qualified_name"),
 		spec("snippet", "Read the source lines for a node. Use only when you must see code.",
 			map[string]any{"file": str, "start_line": num, "end_line": num}, "file"),
