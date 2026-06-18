@@ -8,11 +8,17 @@ import (
 )
 
 // Generate builds a deterministic question set from an indexed project, mirroring
-// the upstream's per-language structure (~12 questions): a mix of structural
+// the upstream's per-language structure (~14 questions): a mix of structural
 // queries (callers/callees/definition, objectively scorable) and open
-// comprehension queries (judge-scored). Candidates are picked from the graph
-// (hubs) — picking WHAT to ask is not circular; the ground-truth answers come
-// from the oracle, not the graph.
+// comprehension queries (judge-scored). Candidates are picked from the graph —
+// picking WHAT to ask is not circular; the ground-truth answers come from the
+// oracle, not the graph.
+//
+// Symbols are sampled in STRATA across the call-degree distribution (hub →
+// typical → leaf), not just the top hubs. Cherry-picking only the most-called
+// symbols would flatter the graph (where grep struggles most); a representative
+// set must include the easy leaf cases too. The open questions still target hubs
+// (worth explaining); the structural ones span the distribution.
 func Generate(st *graph.Store, project, lang string) ([]Question, error) {
 	var qs []Question
 	add := func(q Question) {
@@ -20,10 +26,12 @@ func Generate(st *graph.Store, project, lang string) ([]Question, error) {
 		qs = append(qs, q)
 	}
 
-	inHubs, err := st.TopByInboundCalls(project, 6)
+	// Pull the full ranked list (cap high), then sample evenly across it.
+	inRanked, err := st.TopByInboundCalls(project, 1000)
 	if err != nil {
 		return nil, err
 	}
+	inHubs := stratifiedSample(inRanked, 6)
 	for i, n := range inHubs {
 		add(Question{
 			ID: fmt.Sprintf("callers-%02d", i+1), Type: TypeCallers,
@@ -35,10 +43,11 @@ func Generate(st *graph.Store, project, lang string) ([]Question, error) {
 		})
 	}
 
-	outHubs, err := st.TopByOutboundCalls(project, 3)
+	outRanked, err := st.TopByOutboundCalls(project, 1000)
 	if err != nil {
 		return nil, err
 	}
+	outHubs := stratifiedSample(outRanked, 3)
 	for i, n := range outHubs {
 		add(Question{
 			ID: fmt.Sprintf("callees-%02d", i+1), Type: TypeCallees,
@@ -60,8 +69,9 @@ func Generate(st *graph.Store, project, lang string) ([]Question, error) {
 	}
 
 	// Open comprehension questions — where a structural graph is weakest and the
-	// honest token/quality trade-off shows. Judge-scored.
-	for i, n := range firstN(inHubs, 2) {
+	// honest token/quality trade-off shows. These target real hubs (the top of the
+	// ranking) since a widely-used symbol is the one worth explaining. Judge-scored.
+	for i, n := range firstN(inRanked, 2) {
 		add(Question{
 			ID: fmt.Sprintf("open-%02d", i+1), Type: TypeOpen,
 			Symbol: n.Name, QN: query.StripProjectPrefix(n.QualifiedName), File: n.FilePath,
@@ -93,4 +103,32 @@ func firstN(ns []graph.Node, n int) []graph.Node {
 		return ns
 	}
 	return ns[:n]
+}
+
+// stratifiedSample picks n items spread evenly across a slice already sorted by
+// call degree (descending). It returns the top item, the bottom item, and evenly
+// spaced points between — so a question set spans hubs, typical symbols and leaf
+// symbols instead of only the most-called ones. Deterministic.
+func stratifiedSample(sorted []graph.Node, n int) []graph.Node {
+	if n <= 0 || len(sorted) == 0 {
+		return nil
+	}
+	if len(sorted) <= n {
+		return sorted
+	}
+	out := make([]graph.Node, 0, n)
+	seen := map[int]bool{}
+	for i := range n {
+		// even positions across [0, len-1]; i=0 -> top, i=n-1 -> last.
+		idx := i * (len(sorted) - 1) / (n - 1)
+		if seen[idx] {
+			idx++ // avoid a duplicate when slots collide on a short slice
+		}
+		if idx >= len(sorted) {
+			break
+		}
+		seen[idx] = true
+		out = append(out, sorted[idx])
+	}
+	return out
 }

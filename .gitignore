@@ -14,3 +14,7 @@
 
 # quality-harness run artifacts (repo-specific paths; regenerate with `quality gen`)
 /quality-run/
+
+# multi-repo eval: clones + per-repo run artifacts (protocol + repos.json stay tracked)
+/eval/checkouts/
+/eval/runs/

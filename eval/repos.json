@@ -1,0 +1,17 @@
+{
+  "_comment": "Candidate public repos for the multi-repo quality evaluation (docs/QUALITY.md). Mix of stacks and sizes across our scope (TS/JS + Go). status=candidate until its build is verified locally (scip-typescript needs node_modules installed; go/packages needs `go mod download`). Pick the pilot 5 from here, measure variance, then scale to 12-15.",
+  "repos": [
+    { "id": "zod",        "repo": "colinhacks/zod",          "url": "https://github.com/colinhacks/zod",          "lang": "ts", "stack": "ts-lib",       "size": "small",  "build": "pnpm install", "status": "candidate" },
+    { "id": "zustand",    "repo": "pmndrs/zustand",          "url": "https://github.com/pmndrs/zustand",          "lang": "ts", "stack": "ts-lib",       "size": "small",  "build": "pnpm install", "status": "candidate" },
+    { "id": "date-fns",   "repo": "date-fns/date-fns",       "url": "https://github.com/date-fns/date-fns",       "lang": "ts", "stack": "ts-lib",       "size": "medium", "build": "npm install",  "status": "candidate" },
+    { "id": "trpc",       "repo": "trpc/trpc",               "url": "https://github.com/trpc/trpc",               "lang": "ts", "stack": "ts-monorepo",  "size": "medium", "build": "pnpm install", "status": "candidate" },
+    { "id": "shadcn-ui",  "repo": "shadcn-ui/ui",            "url": "https://github.com/shadcn-ui/ui",            "lang": "tsx","stack": "next-react",   "size": "medium", "build": "pnpm install", "status": "candidate" },
+    { "id": "cal-com",    "repo": "calcom/cal.com",          "url": "https://github.com/calcom/cal.com",          "lang": "tsx","stack": "next-react",   "size": "large",  "build": "yarn install", "status": "candidate" },
+    { "id": "ghostfolio", "repo": "ghostfolio/ghostfolio",   "url": "https://github.com/ghostfolio/ghostfolio",   "lang": "ts", "stack": "nestjs",       "size": "large",  "build": "npm install",  "status": "candidate" },
+    { "id": "twenty",     "repo": "twentyhq/twenty",         "url": "https://github.com/twentyhq/twenty",         "lang": "ts", "stack": "nestjs-react", "size": "large",  "build": "yarn install", "status": "candidate" },
+    { "id": "cobra",      "repo": "spf13/cobra",             "url": "https://github.com/spf13/cobra",             "lang": "go", "stack": "go-lib",       "size": "small",  "build": "go mod download", "status": "candidate" },
+    { "id": "bubbletea",  "repo": "charmbracelet/bubbletea", "url": "https://github.com/charmbracelet/bubbletea", "lang": "go", "stack": "go-tui",       "size": "small",  "build": "go mod download", "status": "candidate" },
+    { "id": "gh-cli",     "repo": "cli/cli",                 "url": "https://github.com/cli/cli",                 "lang": "go", "stack": "go-app",       "size": "medium", "build": "go mod download", "status": "candidate" },
+    { "id": "hugo",       "repo": "gohugoio/hugo",           "url": "https://github.com/gohugoio/hugo",           "lang": "go", "stack": "go-app",       "size": "large",  "build": "go mod download", "status": "candidate" }
+  ]
+}
