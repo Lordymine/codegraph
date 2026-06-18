@@ -212,6 +212,35 @@ func (s *Store) InsertEdges(edges []Edge) (inserted, dropped int, err error) {
 	return inserted, dropped, nil
 }
 
+// TopByInboundCalls returns the nodes with the most inbound CALLS edges — the
+// call hubs. These make the most discriminating benchmark questions ("who calls
+// X"): a real caller set the grep baseline has to reconstruct by hand.
+func (s *Store) TopByInboundCalls(project string, limit int) ([]Node, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	q := `SELECT ` + ftsCols("n.") + ` FROM edges e
+		JOIN nodes n ON n.id = e.target_id
+		WHERE e.project=? AND e.type='CALLS'
+		GROUP BY e.target_id
+		ORDER BY COUNT(*) DESC, n.qualified_name ASC
+		LIMIT ?`
+	rows, err := s.db.Query(q, project, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Node
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 // Stats returns node/edge counts for a project.
 func (s *Store) Stats(project string) (nodes, edges int, err error) {
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE project=?`, project).Scan(&nodes)

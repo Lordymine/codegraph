@@ -9,7 +9,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"time"
 
+	"github.com/Lordymine/codegraph/internal/bench"
 	"github.com/Lordymine/codegraph/internal/graph"
 	"github.com/Lordymine/codegraph/internal/index"
 	"github.com/Lordymine/codegraph/internal/mcp"
@@ -29,6 +32,8 @@ func main() {
 		err = cmdStats(arg(2, "."))
 	case "mcp":
 		err = cmdMCP(arg(2, "."))
+	case "bench":
+		err = cmdBench(arg(2, "."))
 	case "cli":
 		err = cmdCLI(os.Args[2:])
 	case "-h", "--help", "help":
@@ -57,6 +62,7 @@ Usage:
   codegraph index <path>          Index a repo into the local graph store
   codegraph stats <path>          Show node/edge counts for a repo
   codegraph mcp   <path>          Serve the graph over MCP (stdio) for a repo
+  codegraph bench <path>          Re-index + measure token/tool-call/speed efficiency
   codegraph cli   <tool> <path> <json>   Run one query tool (search|callers|callees|neighbors|snippet)
 
 Store lives in ~/.cache/codegraph/<project>.db
@@ -127,6 +133,92 @@ func cmdMCP(root string) error {
 	defer st.Close()
 	eng := query.NewEngine(st, project, root)
 	return mcp.NewServer(eng, os.Stdin, os.Stdout).Serve()
+}
+
+// cmdBench reproduces the upstream's measurable headline (token + tool-call
+// efficiency) plus our own indexing-speed number. It re-indexes the repo (timing
+// it), then asks "who calls X" for the top call hubs and compares the graph
+// against two grep-based baselines. Answer-quality (83% vs 92%) is NOT measured —
+// that needs an LLM judge; this reports only deterministic numbers.
+func cmdBench(root string) error {
+	root, _ = filepath.Abs(root)
+	st, project, err := openFor(root)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+
+	// 1) Indexing speed (our win vs upstream's ~20 min on Windows). Time is
+	// measured clean (no MemStats sampling in the loop, which would STW and skew
+	// it); memory is read once after, as a footprint — not a sampled peak.
+	t0 := time.Now()
+	res, err := index.Run(st, root)
+	if err != nil {
+		return err
+	}
+	elapsed := time.Since(t0)
+	var m1 runtime.MemStats
+	runtime.ReadMemStats(&m1)
+
+	// 2) Token / tool-call efficiency over the top call hubs.
+	hubs, err := st.TopByInboundCalls(project, 15)
+	if err != nil {
+		return err
+	}
+	corpus, err := bench.LoadCorpus(root)
+	if err != nil {
+		return err
+	}
+	eng := query.NewEngine(st, project, root)
+
+	var outs []bench.Outcome
+	for _, q := range bench.QuestionsFromHubs(hubs) {
+		o, err := bench.RunOne(eng, corpus, q)
+		if err != nil {
+			return err
+		}
+		outs = append(outs, o)
+	}
+	sum := bench.Summarize(outs)
+
+	printBench(res, elapsed, m1.HeapInuse, outs, sum)
+	return nil
+}
+
+func printBench(res index.Result, elapsed time.Duration, heapBytes uint64, outs []bench.Outcome, s bench.Summary) {
+	fmt.Printf("# codegraph benchmark — %s\n\n", res.Project)
+
+	fmt.Printf("## Indexing speed\n\n")
+	fmt.Printf("files=%d nodes=%d edges=%d (dropped %d) · time=%s · %.0f files/s · heap=%dMB (footprint, not peak)\n\n",
+		res.Files, res.Nodes, res.EdgesKept, res.EdgesDropped, elapsed.Round(time.Millisecond),
+		float64(res.Files)/elapsed.Seconds(), heapBytes/(1024*1024))
+
+	fmt.Printf("## Token efficiency — \"who calls X\" over %d call hubs\n\n", s.N)
+	fmt.Printf("| symbol | callers | grep files | graph tok | win tok (×) | file tok (×) |\n")
+	fmt.Printf("|---|--:|--:|--:|--:|--:|\n")
+	for _, o := range outs {
+		fmt.Printf("| `%s` | %d | %d | %d | %d (%.1f×) | %d (%.1f×) |\n",
+			o.Question.Name, o.GraphResults, o.MatchFiles, o.Graph.Tokens,
+			o.BaselineWin.Tokens, ratioOf(o.BaselineWin.Tokens, o.Graph.Tokens),
+			o.BaselineFile.Tokens, ratioOf(o.BaselineFile.Tokens, o.Graph.Tokens))
+	}
+
+	fmt.Printf("\n## Summary\n\n")
+	fmt.Printf("- **Tokens (median per query):** %.1f× vs grep+window · %.1f× vs grep+file\n",
+		s.MedianRatioWin, s.MedianRatioFile)
+	fmt.Printf("- **Tokens (total across set):** %.1f× vs grep+window · %.1f× vs grep+file  ← the \"10×\" headline\n",
+		s.TotalRatioWin, s.TotalRatioFile)
+	fmt.Printf("- **Tool calls (total):** graph %d vs baseline %d → %.1f× fewer\n",
+		s.GraphCalls, s.BaselineWinCalls, s.CallRatioWin)
+	fmt.Printf("- **Raw tokens:** graph=%d · grep+window=%d · grep+file=%d\n",
+		s.GraphTokens, s.BaselineWinTokens, s.BaselineFileTokens)
+}
+
+func ratioOf(a, b int) float64 {
+	if b == 0 {
+		b = 1
+	}
+	return float64(a) / float64(b)
 }
 
 // cmdCLI: codegraph cli <tool> <path> <json-args>
