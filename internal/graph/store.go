@@ -81,7 +81,12 @@ func (s *Store) ReplaceProject(project string) error {
 		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM nodes_fts WHERE rowid IN (SELECT id FROM nodes WHERE project=?)`, project); err != nil {
+	// Contentless FTS5 rejects a plain DELETE; rows are removed via the special
+	// 'delete' command, fed the originally-indexed column values (still present in
+	// nodes at this point) so the right terms are purged. Must run before the
+	// nodes rows are deleted.
+	if _, err := tx.Exec(`INSERT INTO nodes_fts(nodes_fts, rowid, name, qualified_name, label, file_path)
+		SELECT 'delete', id, name, qualified_name, label, file_path FROM nodes WHERE project=?`, project); err != nil {
 		return err
 	}
 	if _, err := tx.Exec(`DELETE FROM nodes WHERE project=?`, project); err != nil {
