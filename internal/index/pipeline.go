@@ -18,9 +18,9 @@ type Result struct {
 	EdgesDropped int
 }
 
-// Run indexes root into store under a derived project name. The definitions
-// pass runs in parallel across files (one of the cheap wins of the RAM-first
-// design); call resolution is a TODO (see calls.go).
+// Run indexes root into store under a derived project name. The definitions pass
+// runs in parallel across files (one of the cheap wins of the RAM-first design);
+// imports + call resolution (CALLS edges) follow via ResolveImports/ResolveCalls.
 func Run(store *graph.Store, root string) (Result, error) {
 	root, _ = filepath.Abs(root)
 	project := ProjectName(root)

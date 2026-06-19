@@ -14,7 +14,8 @@ import (
 // (batch, type-checker-accurate) per tsconfig subproject and attributes each
 // resolved reference to the function/method that encloses it (the caller). It is
 // best-effort: a subproject whose scip run fails contributes no edges rather than
-// failing the whole index. Go call resolution (go/packages + callgraph) is TODO.
+// failing the whole index. Go call resolution is in-process via go/packages + a CHA
+// call graph (internal/gocalls).
 func ResolveCalls(project, root string, files []SourceFile, nodes []graph.Node) []graph.Edge {
 	enc := scip.BuildEnclosing(nodes)
 	var edges []graph.Edge

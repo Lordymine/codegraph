@@ -14,14 +14,18 @@ DeusData/codebase-memory-mcp (see `UPSTREAM.md`), but deliberately scoped down t
    entire point — it's where the 10× token saving comes from.
 3. **Borrow the type checker, don't rebuild it.** Upstream re-implemented type
    resolution in C ("Hybrid LSP") across 9 languages — months of work. Our key
-   bet: **delegate call/definition resolution to the language's own LSP server**
-   (gopls, tsserver/typescript-go) via `textDocument/definition`. We get a real
-   type checker's accuracy for free and skip the hardest part of the port.
+   bet: **delegate call resolution to the language's own batch indexer** —
+   `scip-typescript` for TS/JS, `go/packages` + `go/callgraph` for Go (the libs
+   gopls itself calls), read in-process. Same type-checker accuracy as interactive
+   LSP but in one pass, with no long-lived server to babysit — and we skip the
+   hardest part of the port.
 4. **Honest precision.** Unresolved edges are dropped (endpoints must exist in
    the graph), so we never fabricate a call edge. Better a missing edge than a
    wrong one.
-5. **Small dependency surface.** Pure-Go SQLite (`modernc.org/sqlite`, no cgo),
-   stdlib MCP server. tree-sitter is the only heavy dep we'll add.
+5. **Small dependency surface.** Pure-Go SQLite (`modernc.org/sqlite`), stdlib MCP
+   server. The heavy deps are tree-sitter (cgo — the binary needs `CGO_ENABLED=1` +
+   gcc) for M1 and the SCIP bindings + `go/packages` for M2; scip-typescript is a
+   build-time tool (Node), not linked into the binary.
 
 ## Storage (internal/graph)
 
@@ -47,7 +51,7 @@ callers/callees), `Snippet` (reads file lines), `Stats`, `ReplaceProject`.
 Discover(root)            file walk; hard-ignores + .cbmignore; language detect
   → ExtractDefinitions    per-file, in parallel — tree-sitter AST (treesitter.go)
   → ResolveImports        IMPORTS edges (TS/JS, relative File→File)
-  → ResolveCalls          CALLS edges  [STUB today — see ROADMAP M2]
+  → ResolveCalls          CALLS edges  scip-typescript (TS/JS) + go/packages CHA (Go)
   → Store.InsertNodes/Edges
 ```
 
@@ -56,8 +60,9 @@ official **tree-sitter** (cgo, one parser per goroutine) and emits `File`/`Funct
 `Method`/`Class`/`Interface`/`Type`/`Enum`/`Variable` nodes + `DEFINES` edges — with
 real end lines, `is_exported`, and class/method decorators. `ResolveImports`
 (imports.go) resolves relative TS/JS imports to File nodes → `IMPORTS` edges (package
-and unresolved imports drop). `ResolveCalls` is still a stub — the real version is the
-M2 batch-indexer bet (scip-typescript for TS/JS, go/packages+callgraph for Go).
+and unresolved imports drop). `ResolveCalls` (calls.go) emits `CALLS` edges via the M2
+batch indexers — scip-typescript for TS/JS (`internal/scip`) and go/packages + a CHA
+call graph for Go (`internal/gocalls`) — dropping callees that aren't known graph symbols.
 
 ## Query layer (internal/query)
 
@@ -87,12 +92,16 @@ absolute repo path (matches upstream convention).
 ## Package layout
 
 ```
-cmd/codegraph/        CLI entrypoint + subcommands
+cmd/codegraph/        CLI entrypoint + subcommands (index/stats/mcp/bench/quality/cli)
 internal/graph/       model.go (Node/Edge/labels/edge-types) + store.go (SQLite)
-internal/index/       discover.go, definitions.go (regex MVP), calls.go (stub), pipeline.go
+internal/index/       discover.go, definitions.go + treesitter.go, imports.go, calls.go, pipeline.go
+internal/scip/        scip-typescript runner + SCIP→CALLS attribution (TS/JS, M2)
+internal/gocalls/     go/packages + CHA call graph → CALLS (Go, M2)
 internal/query/       query.go (Engine → compact Refs)
 internal/mcp/         server.go (stdio JSON-RPC)
-docs/                 UPSTREAM.md, ARCHITECTURE.md, ROADMAP.md
+internal/bench/       token/tool-call/speed benchmark harness
+internal/quality/     answer-quality harness (question gen + scoring)
+docs/                 UPSTREAM.md, ARCHITECTURE.md, ROADMAP.md, QUALITY.md, BENCHMARK.md
 _upstream/            shallow clone of the original (gitignored, reference only)
 ```
 

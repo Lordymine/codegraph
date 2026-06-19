@@ -38,32 +38,40 @@ NestJS/Next/Electron/RN/Expo/Fastify/Tauri are TS/JS — symbols/imports/calls w
 for all of them with zero per-framework code. Framework semantics (HTTP routes,
 IPC, DI) are an optional, pluggable pass added only on real need.
 
-## M2 — CALLS edges (the big one) — IN PROGRESS
+## M2 — CALLS edges (the big one) ✅ (done)
 
-The hard, valuable part. Delegate to the real compiler, but via BATCH indexers —
-NOT interactive LSP (callHierarchy/references is O(symbols) round-trips for a
-whole-repo graph, plus cold start). The batch tools have the SAME type-checker
-precision in one pass:
+The hard, valuable part — done via BATCH indexers (NOT interactive LSP), which give
+the same type-checker precision in one pass with far less Go code and no long-lived
+process to babysit:
 
-- **Go → in-process**, no gopls subprocess: `golang.org/x/tools/go/packages`
-  (LoadAllSyntax) + `go/callgraph` (CHA — sound on libraries without a `main`).
-  These are the libs gopls itself calls.
-- **TS/JS → `scip-typescript` (batch)** → read `index.scip` in-process via
-  `github.com/sourcegraph/scip/bindings/go/scip`. SCIP emits reference occurrences,
-  not call edges → a ~100-line enclosing-range attribution pass turns them into
-  caller→callee CALLS (port `Beneficial-AI-Foundation/scip-callgraph`).
-- Keep M1 tree-sitter as the cheap structural layer; tag edge confidence so
-  compiler-resolved edges supersede heuristic ones.
-- **Why batch not LSP:** same precision, one pass, far less Go code, no long-lived
-  process to babysit. Cost: build-time Node + tsconfig dep (binary stays single).
-- **Risks:** monorepo tsconfig (scip has `--pnpm-workspaces`/`--infer-tsconfig`);
-  NestJS DI (`@Inject('TOKEN')`, `useClass`/`useFactory`) is invisible to ALL
-  resolvers (binding lives in a `providers` array) — a separate framework pass.
-- **Spike first:** run scip-typescript on the ajudaqui validation-codes module and
-  confirm the 4 same-named `getActiveCode` disambiguate before committing the design.
-- **Exit criteria:** `callers`/`callees` correct on validation-codes (4 `getActiveCode`).
+- **Go → in-process** (`internal/gocalls`), no gopls subprocess:
+  `golang.org/x/tools/go/packages` (LoadAllSyntax) + `go/callgraph` (CHA — sound on
+  libraries without a `main`). These are the libs gopls itself calls.
+- **TS/JS → `scip-typescript` (batch)** (`internal/scip`) → read `index.scip`
+  in-process via `github.com/scip-code/scip/bindings/go/scip`. SCIP emits reference
+  occurrences, not call edges → an enclosing-range attribution pass (`BuildEnclosing`
+  + `CallEdges`) turns them into caller→callee CALLS. One scip run per tsconfig
+  subproject (monorepo), or at the root for a single-package repo.
+- `internal/index/calls.go` `ResolveCalls` wires both, best-effort per subproject;
+  unresolved callees are dropped (filtered to known Function/Method QNs) and edges
+  carry `resolver`/`confidence` tags so compiler-resolved edges supersede heuristics.
 
-## M3 — Incremental indexing
+**Exit criteria — MET:** `callers`/`callees` correct on the ajuda-aqui
+validation-codes module, the 4 same-named `getActiveCode` disambiguated (commits
+13ab98f, 8eb84f9).
+
+**Go precision — RESOLVED.** TS/JS scores ~89% (scip is precise). Go started at ~79%
+(CHA over-approximates interface/func-value dispatch); fixed by **VTA** refining CHA
+plus loading test files (`packages Tests:true`) in `internal/gocalls`. Now ~88% mean /
+85% callers / 92% callees, scored **intra-repo** — stdlib/dep callees are excluded from
+the truth because the graph drops them by design, exactly as the upstream does and as
+its own benchmark grades them (PARTIAL, not FAIL). See `docs/QUALITY.md`.
+
+**NestJS DI blind spot (any resolver):** `@Inject('TOKEN')`, `useClass`/`useFactory`
+bindings live in a `providers` array and are invisible to scip and every other
+resolver — they'd need a dedicated framework-semantic pass (deferred, M5).
+
+## M3 — Incremental indexing — NEXT
 
 - Persist a per-file content hash (sha256 + mtime).
 - `detect_changes`: re-index only changed files; diff nodes/edges; map to affected

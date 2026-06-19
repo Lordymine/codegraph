@@ -22,29 +22,43 @@ Indexa um repo → grafo SQLite de símbolos + relações; o agente consulta o g
 2. **Token-efficient por construção** — toda query retorna **ref compacta**
    (`name + qualified_name + label + file + line`), NUNCA código. Código só via a
    tool `snippet`. É daí que vem o ~10× de economia de token.
-3. **Aposta-chave: delegar a LSP, não reimplementar type-checker.** O upstream
-   refez resolução de tipos em C ("Hybrid LSP", ~9 langs, meses de trabalho).
-   Nós delegamos resolução de chamada/definição ao LSP da linguagem (gopls,
-   tsserver/typescript-go) via `textDocument/definition`. Precisão de type-checker
-   real de graça, e pulamos a parte mais difícil do port.
+3. **Aposta-chave: delegar ao type-checker da linguagem, não reimplementar.** O
+   upstream refez resolução de tipos em C ("Hybrid LSP", ~9 langs, meses de
+   trabalho). Nós delegamos a resolução de chamadas aos **indexadores batch** da
+   linguagem — `scip-typescript` (TS/JS) e `go/packages` + `go/callgraph` (Go, as
+   libs que o próprio gopls usa) — lidos in-process. Mesma precisão de type-checker
+   real, num passe só, sem servidor LSP vivo pra babá. Pulamos a parte mais difícil
+   do port.
 4. **Precisão honesta** — aresta não resolvida é descartada (endpoints precisam
    existir no grafo). Melhor aresta faltando que aresta errada.
-5. **Poucas dependências** — SQLite puro-Go (`modernc.org/sqlite`, sem cgo), MCP
-   server em stdlib. tree-sitter é a única dep pesada que vamos adicionar.
+5. **Poucas dependências** — SQLite puro-Go (`modernc.org/sqlite`), MCP server em
+   stdlib. tree-sitter (cgo) é a dep pesada do M1 — por isso o build exige
+   `CGO_ENABLED=1` + gcc. scip-typescript entra como ferramenta de build (Node), não
+   liga no binário.
 
-## Estado atual — M0 (scaffold rodando)
+## Estado atual — M0 + M1 + M2 fechados
 
 - Store SQLite 2 tabelas + FTS5 espelhando o upstream (`internal/graph`).
 - Discover (hard-ignores + `.cbmignore`) + detecção de linguagem (Go/TS/JS).
-- Pass de definições **por REGEX** (placeholder, `internal/index/definitions.go`)
-  → nós File/Function/Method/Class + edges DEFINES. Paralelo (NumCPU goroutines).
+- **M1** — definições via **tree-sitter** (`internal/index/treesitter.go`): nós
+  File/Function/Method/Class/Interface/Type/Enum/Variable + edges DEFINES, com
+  `end_line` real, `is_exported` e decorators (NestJS etc.). Edges IMPORTS (TS/JS).
+  Paralelo (NumCPU goroutines).
+- **M2** — edges **CALLS** com precisão de type-checker: `scip-typescript` (TS/JS,
+  `internal/scip`) + `go/packages` + CHA (Go, `internal/gocalls`), costurados em
+  `internal/index/calls.go`. Tags `resolver`/`confidence` nas arestas.
 - Query engine (`internal/query`): search / callers / callees / neighbors / snippet.
-- MCP stdio JSON-RPC mínimo (`internal/mcp`).
-- CLI (`cmd/codegraph`): `index | stats | mcp | cli`.
-- **Prova:** indexa a si mesmo (9 arq, 75 nós, 66 edges); `cli search` retorna file+line.
+- MCP stdio JSON-RPC (`internal/mcp`); CLI (`cmd/codegraph`): `index | stats | mcp |
+  bench | quality | cli`.
+- **Prova M2:** `callees(ResolveCalls)` → as 6 funções que ela chama;
+  `callers(Store.InsertEdges)` → `pipeline.Run`; os 4 `getActiveCode` homônimos do
+  ajuda-aqui desambiguados.
 
-**Limitação honesta:** sem CALLS edges ainda (o `ResolveCalls` é stub). O valor
-real vem no M2.
+**Qualidade (medida):** harness de answer-quality — TS/JS ~89%; Go ~88% mean / 85%
+callers / 92% callees, medido **intra-repo** (callees de stdlib/lib fora do oráculo,
+porque o grafo os dropa por design — igual ao upstream, que grada isso como PARTIAL).
+Go chegou lá com **VTA** (`internal/gocalls`, substituiu o CHA impreciso) + carregar
+arquivos de teste (`packages Tests:true`). Ver `docs/QUALITY.md`.
 
 ## Build & uso
 
@@ -62,13 +76,13 @@ Store: `~/.cache/codegraph/<project>.db`. Original clonado (shallow) em
 
 ## Próximos passos (ordem) — ver `docs/ROADMAP.md`
 
-- **M1** — trocar regex por **tree-sitter** (`github.com/smacker/go-tree-sitter`)
-  + grammars Go/TS/TSX; capturar signature/params/decorators; edges IMPORTS.
-- **M2 (o grande)** — **CALLS edges via LSP delegation** (gopls/tsserver). Critério
-  de saída: callers/callees corretos no módulo validation-codes do ajudaqui, com
-  os 4 `getActiveCode` homônimos desambiguados.
-- **M3** incremental por hash de arquivo · **M4** SIMILAR_TO (MinHash/LSH) ·
-  **M5** get_architecture + registrar no Claude Code.
+- **M1** ✅ tree-sitter + superfície TS completa + IMPORTS.
+- **M2** ✅ CALLS edges via indexadores batch (scip-typescript + go/packages CHA).
+- **M3 (próximo)** — incremental por hash de arquivo (hoje todo `index` faz
+  `ReplaceProject` e re-indexa tudo).
+- **M4** SIMILAR_TO (MinHash/LSH) · **M5** get_architecture + registrar no Claude Code.
+- **Qualidade Go ≥85%** ✅ — VTA (substituiu CHA) + carregar arquivos de teste,
+  medição intra-repo. Track de paper/eval na memória.
 
 ## Convenções
 
