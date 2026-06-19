@@ -1,7 +1,10 @@
-// Package gocalls resolves Go CALLS edges in-process via go/packages + a CHA
-// call graph — the same machinery gopls uses, no subprocess. CHA is sound on
-// libraries (no main needed). Only edges between functions/methods that exist in
-// the node set are kept (honest precision); stdlib/dep targets are dropped.
+// Package gocalls resolves Go CALLS edges in-process via go/packages + a VTA
+// (Variable Type Analysis) call graph refining CHA — the same machinery gopls
+// uses, no subprocess, no main needed. VTA tracks the concrete types each variable
+// can hold, so an interface call dispatched on a known type does not over-approximate
+// to every implementation of that interface (CHA's main imprecision). Only edges
+// between functions/methods that exist in the node set are kept (honest precision);
+// stdlib/dep targets are dropped.
 package gocalls
 
 import (
@@ -10,6 +13,7 @@ import (
 	"strings"
 
 	"golang.org/x/tools/go/callgraph/cha"
+	"golang.org/x/tools/go/callgraph/vta"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -38,7 +42,9 @@ func CallEdges(project, root string, known func(qn string) bool) (edges []graph.
 	}
 	prog, _ := ssautil.AllPackages(pkgs, ssa.InstantiateGenerics)
 	prog.Build()
-	cg := cha.CallGraph(prog)
+	// VTA refines the CHA graph using the concrete types each variable can hold —
+	// far fewer false interface-dispatch edges than CHA alone, and no main needed.
+	cg := vta.CallGraph(ssautil.AllFunctions(prog), cha.CallGraph(prog))
 
 	seen := make(map[string]bool)
 	for fn, node := range cg.Nodes {
@@ -59,7 +65,7 @@ func CallEdges(project, root string, known func(qn string) bool) (edges []graph.
 			edges = append(edges, graph.Edge{
 				Project: project, SourceQN: callerQN, TargetQN: calleeQN,
 				Type:  graph.EdgeCalls,
-				Props: map[string]any{"resolver": "go/callgraph", "confidence": "high"},
+				Props: map[string]any{"resolver": "vta", "confidence": "high"},
 			})
 		}
 	}
