@@ -47,6 +47,26 @@ func TestCallEdges_IncludesTestCallers(t *testing.T) {
 	}
 }
 
+// TestCallEdges_GenericsDoNotCrash guards the RuntimeTypes-free call graph (cha.go):
+// x/tools' cha.CallGraph/AllFunctions panic on generic instantiations, which used to
+// silently zero a whole repo's Go CALLS. CallEdges must build edges on generic code
+// without erroring.
+func TestCallEdges_GenericsDoNotCrash(t *testing.T) {
+	root, err := filepath.Abs("testdata/generics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges, err := CallEdges("test", root, func(string) bool { return true })
+	if err != nil {
+		t.Fatalf("CallEdges on generic code errored: %v", err)
+	}
+	// The old code panicked in RuntimeTypes and dropped the WHOLE repo's edges. A
+	// non-generic call in a file that also contains generics must still resolve.
+	if !hasEdge(edges, "use", "helper") {
+		t.Errorf("generic code poisoned the graph: use->helper missing; edges:%s", dumpEdges(edges))
+	}
+}
+
 func hasEdge(edges []graph.Edge, srcTail, dstTail string) bool {
 	for _, e := range edges {
 		if strings.HasSuffix(e.SourceQN, srcTail) && strings.HasSuffix(e.TargetQN, dstTail) {

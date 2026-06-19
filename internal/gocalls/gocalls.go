@@ -1,5 +1,5 @@
 // Package gocalls resolves Go CALLS edges in-process via go/packages + a VTA
-// (Variable Type Analysis) call graph refining CHA — the same machinery gopls
+// (Variable Type Analysis) call graph — the same machinery gopls
 // uses, no subprocess, no main needed. VTA tracks the concrete types each variable
 // can hold, so an interface call dispatched on a known type does not over-approximate
 // to every implementation of that interface (CHA's main imprecision). Only edges
@@ -13,7 +13,6 @@ import (
 	"path/filepath"
 	"strings"
 
-	"golang.org/x/tools/go/callgraph/cha"
 	"golang.org/x/tools/go/callgraph/vta"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
@@ -26,10 +25,10 @@ import (
 // and callee are both known nodes. Best-effort: load errors don't abort (it
 // builds the graph from whatever type-checked).
 func CallEdges(project, root string, known func(qn string) bool) (edges []graph.Edge, err error) {
-	// golang.org/x/tools can panic on some generic instantiations (a known issue
-	// in ssa RuntimeTypes / ForEachElement, hit by repos like cli/cli). Recover so
-	// a single repo's generics don't abort the whole index — best-effort means no
-	// Go CALLS for that repo rather than a crash. (TODO: a generics-safe call graph.)
+	// Defense in depth: the call-graph build avoids prog.RuntimeTypes() (the known
+	// generics panic — see safeAllFunctions), but recover anyway so any other
+	// x/tools edge case degrades to "no Go CALLS for this repo" rather than crashing
+	// the whole index.
 	defer func() {
 		if r := recover(); r != nil {
 			edges, err = nil, nil
@@ -45,9 +44,16 @@ func CallEdges(project, root string, known func(qn string) bool) (edges []graph.
 	}
 	prog, _ := ssautil.AllPackages(pkgs, ssa.InstantiateGenerics)
 	prog.Build()
-	// VTA refines the CHA graph using the concrete types each variable can hold —
-	// far fewer false interface-dispatch edges than CHA alone, and no main needed.
-	cg := vta.CallGraph(ssautil.AllFunctions(prog), cha.CallGraph(prog))
+	// VTA refines a CHA seed using the concrete types each variable can hold — far
+	// fewer false interface-dispatch edges than CHA alone, and no main needed. We use
+	// our own safeAllFunctions + chaCallGraph (see cha.go) instead of
+	// ssautil.AllFunctions + cha.CallGraph: both upstream helpers call
+	// prog.RuntimeTypes(), which panics on generic instantiations ("ForEachElement …
+	// *types.TypeParam", x/tools v0.46) and silently zeroed Go CALLS for generic-heavy
+	// repos (gh-cli). Our copies are RuntimeTypes-free; the CHA seed still gives VTA
+	// the candidate set it refines, so precision is unchanged on non-generic repos.
+	fns := safeAllFunctions(prog)
+	cg := vta.CallGraph(fns, chaCallGraph(fns))
 
 	seen := make(map[string]bool)
 	for fn, node := range cg.Nodes {
