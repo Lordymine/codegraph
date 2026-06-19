@@ -16,6 +16,7 @@ type Result struct {
 	Nodes        int
 	EdgesKept    int
 	EdgesDropped int
+	Reused       bool // nothing changed since the last index; the pipeline was skipped
 }
 
 // Run indexes root into store under a derived project name. The definitions pass
@@ -24,6 +25,17 @@ type Result struct {
 func Run(store *graph.Store, root string) (Result, error) {
 	root, _ = filepath.Abs(root)
 	project := ProjectName(root)
+
+	// Incremental no-op: if no source file changed since the last index, skip the
+	// whole pipeline (notably the expensive whole-project CALLS re-resolution) and
+	// reuse the stored graph. A never-indexed project reports every file as Added,
+	// so this only fires when there is a prior index to reuse.
+	if ch, err := DetectChanges(store, project, root); err == nil && !ch.Any() {
+		if n, e, err := store.Stats(project); err == nil && n > 0 {
+			files, _ := store.FileHashes(project)
+			return Result{Project: project, Files: len(files), Nodes: n, EdgesKept: e, Reused: true}, nil
+		}
+	}
 
 	files, err := Discover(root)
 	if err != nil {

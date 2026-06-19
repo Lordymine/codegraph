@@ -75,3 +75,65 @@ func TestDetectChanges(t *testing.T) {
 		t.Errorf("b.ts should be Deleted; got %+v", ch)
 	}
 }
+
+// TestRun_NoOpWhenUnchanged pins the first user-facing incremental win: re-running
+// Run on an unchanged repo skips the whole pipeline (instant) instead of re-resolving
+// CALLS. Proven with a sentinel node that a real re-index (ReplaceProject) would wipe:
+// if it survives, the pipeline did not run.
+func TestRun_NoOpWhenUnchanged(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel, content string) {
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(rel)), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("a.ts", "export const a = 1\n")
+
+	store, err := graph.Open(filepath.Join(dir, "g.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := ProjectName(dir)
+
+	res1, err := Run(store, dir)
+	if err != nil {
+		t.Fatalf("run1: %v", err)
+	}
+	if res1.Reused {
+		t.Fatal("first index must do work, not reuse")
+	}
+	n0, _, _ := store.Stats(project)
+
+	// A sentinel node that a real re-index (ReplaceProject) would wipe.
+	if err := store.InsertNodes([]graph.Node{{
+		Project: project, Label: "Sentinel", Name: "s", QualifiedName: project + ":__sentinel__",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Unchanged re-run -> no-op: Reused, and the sentinel survives (pipeline skipped).
+	res2, err := Run(store, dir)
+	if err != nil {
+		t.Fatalf("run2: %v", err)
+	}
+	if !res2.Reused {
+		t.Error("unchanged re-index should be a no-op (Reused=true)")
+	}
+	if n, _, _ := store.Stats(project); n != n0+1 {
+		t.Errorf("no-op touched the store: nodes=%d, want %d (sentinel intact)", n, n0+1)
+	}
+
+	// Change a.ts -> full re-index: Reused false, sentinel wiped, rebuilt from files.
+	write("a.ts", "export const a = 2\n")
+	res3, err := Run(store, dir)
+	if err != nil {
+		t.Fatalf("run3: %v", err)
+	}
+	if res3.Reused {
+		t.Error("changed re-index must do work (Reused=false)")
+	}
+	if n, _, _ := store.Stats(project); n != n0 {
+		t.Errorf("re-index should rebuild from files (sentinel wiped): nodes=%d, want %d", n, n0)
+	}
+}

@@ -110,6 +110,11 @@ func cmdIndex(root string) error {
 	if err != nil {
 		return err
 	}
+	if res.Reused {
+		fmt.Printf("unchanged %s — reused index (files=%d nodes=%d edges=%d)\n",
+			res.Project, res.Files, res.Nodes, res.EdgesKept)
+		return nil
+	}
 	fmt.Printf("indexed %s\n  files=%d nodes=%d edges=%d (dropped %d unresolved)\n",
 		res.Project, res.Files, res.Nodes, res.EdgesKept, res.EdgesDropped)
 	return nil
