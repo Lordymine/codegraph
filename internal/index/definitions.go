@@ -1,6 +1,8 @@
 package index
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"os"
 	"strings"
 
@@ -34,7 +36,7 @@ func extractDefsFromSource(project, relPath string, lang Lang, data []byte) ([]g
 		Project: project, Label: graph.LabelFile,
 		Name: baseName(relPath), QualifiedName: fileQN,
 		FilePath: relPath, StartLine: 1, EndLine: strings.Count(string(data), "\n") + 1,
-		Props: map[string]any{"lang": string(lang)},
+		Props: map[string]any{"lang": string(lang), "sha256": hashBytes(data)},
 	}
 	nodes := []graph.Node{fileNode}
 	var edges []graph.Edge
@@ -78,6 +80,12 @@ func extractDefsFromSource(project, relPath string, lang Lang, data []byte) ([]g
 		walkTSDefs(root, data, add)
 	}
 	return nodes, edges
+}
+
+// hashBytes is the per-file content hash used for incremental change detection.
+func hashBytes(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
 }
 
 func baseName(p string) string {

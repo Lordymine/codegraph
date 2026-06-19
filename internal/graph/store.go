@@ -293,6 +293,35 @@ func (s *Store) SampleByLabel(project, label string, limit int) ([]Node, error) 
 	return out, rows.Err()
 }
 
+// FileHashes returns the stored sha256 content hash of every File node in the
+// project, keyed by repo-relative path. The basis for incremental indexing:
+// comparing these against the files currently on disk yields the change set.
+func (s *Store) FileHashes(project string) (map[string]string, error) {
+	rows, err := s.db.Query(`SELECT file_path, properties FROM nodes WHERE project=? AND label=?`,
+		project, string(LabelFile))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var path, props string
+		if err := rows.Scan(&path, &props); err != nil {
+			return nil, err
+		}
+		if props == "" {
+			continue
+		}
+		var p map[string]any
+		if json.Unmarshal([]byte(props), &p) == nil {
+			if h, ok := p["sha256"].(string); ok {
+				out[path] = h
+			}
+		}
+	}
+	return out, rows.Err()
+}
+
 // Stats returns node/edge counts for a project.
 func (s *Store) Stats(project string) (nodes, edges int, err error) {
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE project=?`, project).Scan(&nodes)
