@@ -4,7 +4,8 @@
 // can hold, so an interface call dispatched on a known type does not over-approximate
 // to every implementation of that interface (CHA's main imprecision). Only edges
 // between functions/methods that exist in the node set are kept (honest precision);
-// stdlib/dep targets are dropped.
+// stdlib/dep targets are dropped. Test files are loaded (packages Tests:true) so
+// calls from *_test.go contribute edges too — a major recall source for "who calls X".
 package gocalls
 
 import (
@@ -35,7 +36,9 @@ func CallEdges(project, root string, known func(qn string) bool) (edges []graph.
 		}
 	}()
 
-	cfg := &packages.Config{Mode: packages.LoadAllSyntax, Dir: root}
+	// Tests:true loads *_test.go too, so test functions contribute caller/callee
+	// edges (the dominant recall source for "who calls X" on library code).
+	cfg := &packages.Config{Mode: packages.LoadAllSyntax, Tests: true, Dir: root}
 	pkgs, loadErr := packages.Load(cfg, "./...")
 	if loadErr != nil {
 		return nil, loadErr

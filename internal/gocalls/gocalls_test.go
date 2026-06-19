@@ -30,6 +30,23 @@ func TestCallEdges_InterfacePrecision(t *testing.T) {
 	}
 }
 
+// TestCallEdges_IncludesTestCallers pins that calls made from *_test.go produce
+// edges (packages Tests:true). Test functions are the dominant caller set for
+// library code, so dropping them would gut "who calls X" recall.
+func TestCallEdges_IncludesTestCallers(t *testing.T) {
+	root, err := filepath.Abs("testdata/withtest")
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges, err := CallEdges("test", root, func(string) bool { return true })
+	if err != nil {
+		t.Fatalf("CallEdges: %v", err)
+	}
+	if !hasEdge(edges, "TestTarget", "Target") {
+		t.Errorf("expected test-origin edge TestTarget->Target; edges:%s", dumpEdges(edges))
+	}
+}
+
 func hasEdge(edges []graph.Edge, srcTail, dstTail string) bool {
 	for _, e := range edges {
 		if strings.HasSuffix(e.SourceQN, srcTail) && strings.HasSuffix(e.TargetQN, dstTail) {
