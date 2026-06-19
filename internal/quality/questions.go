@@ -53,8 +53,10 @@ func Generate(st *graph.Store, project, lang string) ([]Question, error) {
 			ID: fmt.Sprintf("callees-%02d", i+1), Type: TypeCallees,
 			Symbol: n.Name, QN: query.StripProjectPrefix(n.QualifiedName),
 			File: n.FilePath, Line: n.StartLine,
-			Prompt: fmt.Sprintf("List EVERY function or method that `%s` (defined in %s:%d) calls directly. "+
-				"Answer as a list of the callee symbol names.",
+			Prompt: fmt.Sprintf("List every function or method DEFINED IN THIS REPOSITORY that `%s` (defined "+
+				"in %s:%d) calls directly. Exclude calls into the standard library or third-party "+
+				"dependencies (e.g. fmt.*, os.*, builtins) — only intra-repo callees count. Keep "+
+				"func-value/field invocations defined here. Answer as a list of the callee symbol names.",
 				n.Name, n.FilePath, n.StartLine),
 		})
 	}

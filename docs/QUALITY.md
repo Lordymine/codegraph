@@ -29,7 +29,7 @@ against, and a model to produce the agent's answer. Two honesty traps:
 | type | question | scoring |
 |---|---|---|
 | `callers` | who calls X | **F1** over caller names vs oracle |
-| `callees` | what X calls | **F1** over callee names vs oracle |
+| `callees` | what X calls (intra-repo) | **F1** over intra-repo callee names vs oracle |
 | `definition` | where is X defined | **file:line** match (basename + ±3 lines) |
 | `open` | explain X's responsibility | **LLM judge**, 0–100% |
 
@@ -39,6 +39,26 @@ Candidates are picked from the graph (call hubs, sampled definitions) — choosi
 `normName` folds a reference to its last identifier (`Service.getActiveCode`,
 `x.getActiveCode()`, `getActiveCode` all compare equal). Same-named methods in
 different classes therefore collapse together — an accepted approximation.
+
+## Intra-repo ground truth (callers/callees)
+
+The graph emits CALLS edges **only between symbols defined in this repo** — stdlib,
+dependency and builtin targets are dropped by design (honest precision). The upstream
+does exactly the same: its `resolve_single_call` emits an edge only when the callee
+resolves to an existing node, and its own benchmark grades an external-only callee set
+(`SendAsync has 0 outbound — calls external ISender.Send`) as **PARTIAL, not FAIL**.
+So the truth **and** the question prompt for callers/callees are **intra-repo**: only
+callers/callees themselves defined in the repo count; stdlib/dependency calls
+(`fmt.Errorf`, `os.Create`, pflag's `GetBool`, `append`) are excluded from the truth
+*and* from what either responder is asked for (so the grep baseline isn't unfairly
+penalised for listing external calls it can see and the graph can't).
+
+This is not goalpost-moving — it scores the graph against the contract it actually has
+(shared with the upstream). What is **not** excluded: func-value / dynamic dispatch
+(`RunE`, callback fields) — intra-repo calls the graph genuinely cannot resolve
+statically, so they stay in the truth as honest misses. Measured effect on cobra (Go):
+counting stdlib gives callees F1 62%; intra-repo gives **92%** — the gap was the graph
+being penalised for stdlib it never indexes.
 
 ## The three roles (run by the ultracode workflow)
 

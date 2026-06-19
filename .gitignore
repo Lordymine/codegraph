@@ -18,3 +18,10 @@
 # multi-repo eval: clones + per-repo run artifacts (protocol + repos.json stay tracked)
 /eval/checkouts/
 /eval/runs/
+
+# session scratch: one-off retrofit measurement scripts + captured agent output.
+# The official methodology lives in quality-workflow.js + internal/quality + docs/QUALITY.md.
+/eval/_*.json
+/eval/measure-vta.js
+/eval/splice-items.js
+/eval/intra-repo-truth.js
