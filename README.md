@@ -10,7 +10,7 @@ symbols and *type-checker-accurate* call edges, then answer structural questions
 a fraction of the tokens.**
 
 `Go 1.26` · `SQLite (pure-Go, no cgo for storage)` · `MCP-native` · `MIT`
-· status: **M0–M2 done — indexes, resolves calls, serves agents**
+· status: **M0–M4 done + self-install — type-checker-accurate calls, incremental, near-clones, one-command agent setup**
 
 </div>
 
@@ -78,7 +78,7 @@ codegraph makes the opposite bet:
 
 > **Delegate call resolution to the type checkers that already exist.**
 > TypeScript/JS via **[scip-typescript](https://github.com/sourcegraph/scip-typescript)**
-> (a batch indexer, *not* an interactive LSP); Go via **`go/packages` + a CHA call
+> (a batch indexer, *not* an interactive LSP); Go via **`go/packages` + a VTA call
 > graph** (the machinery gopls itself uses). We get type-checker-grade precision —
 > param binding, overload/return-type inference, same-name disambiguation — for
 > free, and skip the single hardest part of the port.
@@ -107,13 +107,14 @@ discover            gitignore/.cbmignore + language detect (Go/TS/TSX/JS)
   → imports         IMPORTS edges (relative module resolution)
   → calls           CALLS edges:
                       · TS/JS  → scip-typescript per tsconfig subproject
-                      · Go     → go/packages + CHA call graph (in-process)
+                      · Go     → go/packages + VTA call graph (in-process)
   → store           SQLite: nodes + edges + FTS5(BM25), QN→id resolved in memory
 ```
 
 Query engine returns compact refs for: **search** (ranked BM25), **callers**,
-**callees**, **neighbors**, and **snippet** (the one tool that returns source).
-All exposed over **MCP (stdio JSON-RPC)** so any MCP-capable agent can use it.
+**callees**, **neighbors**, **similar** (near-clones), **dead_code** (uncalled private
+functions), **detect_changes** (staleness), and **snippet** (the one tool that returns
+source). All exposed over **MCP (stdio JSON-RPC)** so any MCP-capable agent can use it.
 
 ## Quick start
 
@@ -134,6 +135,39 @@ go build -o codegraph ./cmd/codegraph        # needs cgo (tree-sitter) + Node (s
 
 Store lives in `~/.cache/codegraph/<project>.db`.
 
+## Use it with your agent
+
+One command registers codegraph as an MCP server in every supported agent on your
+`PATH`, and prints a paste-ready snippet for the rest:
+
+```bash
+codegraph install
+```
+
+- **Claude Code** and **Codex** — registered via their own CLI (`claude mcp add
+  --scope user` / `codex mcp add`), so it works in **every** repo you open.
+- **opencode** — merged into your `opencode.jsonc`/`.json` (your existing config is
+  preserved, not clobbered).
+- **Any other MCP agent** — the command prints the stdio server line to add by hand.
+
+There's **no per-repo step**: the server auto-indexes whatever repo the agent opens
+(it reads `$CLAUDE_PROJECT_DIR`, else its working directory). The first index of a
+repo runs in the background while the agent stays responsive — tools answer
+"indexing, retry shortly" until it's ready; re-launches are an incremental no-op, so
+the agent always queries a fresh graph.
+
+### Prerequisites
+
+codegraph delegates call resolution to real type checkers, so each language needs its
+toolchain present. Without it, definitions/search still work and call edges degrade
+gracefully (dropped, never wrong):
+
+- **Build:** the binary needs cgo + a C compiler (tree-sitter). Prefer a prebuilt
+  release; otherwise `CGO_ENABLED=1 go build`.
+- **TypeScript/JS:** **Node.js** on PATH (scip-typescript runs via `npx`), plus the
+  repo's `node_modules` installed and a `tsconfig.json` for full call resolution.
+- **Go:** the **Go toolchain** on PATH and a buildable module (`go mod download`).
+
 ## What it does *not* do (read this)
 
 Credibility is part of the pitch. codegraph is a **complement to grep, not a
@@ -142,8 +176,9 @@ replacement**:
 - **Find an exact string/literal?** grep wins. The graph indexes symbols, not text.
 - **Dynamic dispatch / DI string tokens / reflection?** The type checker can't
   resolve them, so the edge is honestly dropped — the graph won't see those calls.
-- **Stale between re-indexes.** The graph is a snapshot; incremental re-index by
-  file hash is the next milestone (M3).
+- **Stale between re-indexes.** The graph is a snapshot — but re-index is incremental
+  (M3: a no-op when nothing changed), and the MCP server auto-re-indexes on launch, so
+  an agent always opens a fresh graph.
 - **Answer quality is now self-measured — honestly.** A separate harness
   (`docs/QUALITY.md`) pits a graph-only agent against a grep-only one, graded against
   an independent oracle. On ajuda-aqui: **89% vs 87% quality at ~8× fewer tokens and
@@ -164,10 +199,14 @@ after the engineering clears a hard bar:
 - [x] **≥15× token efficiency on the conservative (window) baseline** — the paper's
       gate. **Cleared: 16.0× total / 15.3× median** on ajuda-aqui, via a compact TSV
       wire format (keys once, project prefix stripped) that ~halved graph-side tokens.
-- [ ] **M3** — incremental re-index by file hash (kills the 30 s on unchanged repos).
-- [ ] **M4** — `SIMILAR_TO` via MinHash/LSH; **M5** — `get_architecture`, MCP polish.
-- [x] **Quality harness** — built + first run (89% vs 87% baseline at ~8× less cost on
-      ajuda-aqui; `docs/QUALITY.md`). Remaining for the paper: scale to N repos.
+- [x] **M3** — incremental re-index by file hash (no-op on unchanged repos; CALLS
+      gated by changed scope).
+- [x] **M4** — `SIMILAR_TO` via MinHash/LSH + `similar`/`dead_code`/cyclomatic
+      complexity; the recall fixes that came with it took Go callers to ~100%.
+- [~] **M5** — MCP polish + distribution: auto-index-on-serve and `codegraph install`
+      (one-command agent setup) **done**; `get_architecture`/hotspots + HTTP routes pending.
+- [x] **Quality harness** — graph 89–94% vs baseline at ~4.5–8× less cost on
+      ajuda-aqui/cobra/gh-cli (`docs/QUALITY.md`). Remaining for the paper: scale to N repos.
 
 See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full plan and open questions.
 
@@ -183,11 +222,13 @@ See [`docs/ROADMAP.md`](docs/ROADMAP.md) for the full plan and open questions.
 ## Layout
 
 ```
-cmd/codegraph/    CLI (index | stats | bench | mcp | cli)
+cmd/codegraph/    CLI (index | stats | changes | install | mcp | bench | quality | cli)
 internal/graph/   model + SQLite store (the 2-table graph + FTS5)
 internal/index/   discover, tree-sitter definitions, imports, calls pipeline
 internal/scip/    SCIP reader + scip-typescript driver → TS/JS CALLS edges
-internal/gocalls/ go/packages + CHA call graph → Go CALLS edges
+internal/gocalls/ go/packages + VTA call graph → Go CALLS edges
+internal/similar/ MinHash + LSH → SIMILAR_TO near-clone edges
+internal/install/ register the MCP server into detected agents
 internal/query/   query engine → compact refs
 internal/bench/   token / tool-call efficiency harness
 internal/mcp/     stdio JSON-RPC MCP server

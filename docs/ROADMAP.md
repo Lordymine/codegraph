@@ -114,13 +114,19 @@ the enclosing named function (`ssa.Function.Parent()`) + keeping recursive self-
 false positives. Also raised the relationship-query default limit 50→500 so hub answers
 aren't silently truncated. See `docs/QUALITY.md`.
 
-## M5 — MCP polish + distribution
+## M5 — MCP polish + distribution (in progress)
 
-- `get_architecture` (languages, packages, entry points, routes, hotspots) from
-  graph aggregates + a community-detection pass.
-- HTTP route nodes + `HTTP_CALLS` matching (NestJS controllers ↔ client calls).
-- `install`-style registration helper for Claude Code (`claude mcp add`).
-- Optional: committable `graph.db.zst` team artifact (zstd snapshot + bootstrap).
+- ✅ **Auto-index on serve** — `codegraph mcp` indexes in a background goroutine and
+  gates tool calls behind a readiness check, so a freshly-registered server "just
+  works" on any repo (no manual `index` step); M3's no-op keeps it cheap every launch.
+  Resolves the repo from `$CLAUDE_PROJECT_DIR` or cwd.
+- ✅ **`codegraph install`** — registers the MCP server into detected agents: Claude
+  Code & Codex via their add-CLI (user scope, any repo), opencode via a config-file
+  merge that preserves existing config; a manual snippet for the rest (`internal/install`).
+- ⬜ `get_architecture` (languages, packages, entry points, routes, **hotspots** —
+  reads `properties.complexity` from M4) from graph aggregates + community detection.
+- ⬜ HTTP route nodes + `HTTP_CALLS` matching (NestJS controllers ↔ client calls).
+- ⬜ Optional: committable `graph.db.zst` team artifact (zstd snapshot + bootstrap).
 
 ## Stretch / maybe-never (YAGNI unless proven)
 

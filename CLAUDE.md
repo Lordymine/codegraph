@@ -56,8 +56,11 @@ Indexa um repo → grafo SQLite de símbolos + relações; o agente consulta o g
   recall do call-graph (closures + self-edges) que levaram callers Go a 100%.
 - Query engine (`internal/query`): search / callers / callees / neighbors / similar /
   dead_code / snippet / detect_changes.
-- MCP stdio JSON-RPC (`internal/mcp`); CLI (`cmd/codegraph`): `index | stats | changes |
-  mcp | bench | quality | cli`.
+- MCP stdio JSON-RPC (`internal/mcp`) com **auto-index em background no `mcp`** (gate
+  de readiness; repo via `$CLAUDE_PROJECT_DIR`/cwd) e **`codegraph install`**
+  (`internal/install`: registra em Claude Code/Codex via CLI próprio + opencode via
+  merge de config). CLI (`cmd/codegraph`): `index | stats | changes | install | mcp |
+  bench | quality | cli`.
 - **Prova M2:** `callees(ResolveCalls)` → as 6 funções que ela chama;
   `callers(Store.InsertEdges)` → `pipeline.Run`; os 4 `getActiveCode` homônimos do
   ajuda-aqui desambiguados.
@@ -93,8 +96,9 @@ Store: `~/.cache/codegraph/<project>.db`. Original clonado (shallow) em
 - **M2** ✅ CALLS edges via indexadores batch (scip-typescript + go/packages CHA).
 - **M3** ✅ incremental: hash por arquivo + no-op + CALLS gated por escopo + `detect_changes`.
 - **M4** ✅ SIMILAR_TO (MinHash/LSH) + `similar`/`dead_code` + complexidade ciclomática.
-- **M5 (próximo)** get_architecture (hotspots lê `properties.complexity`) + HTTP route
-  nodes + `HTTP_CALLS` + registrar no Claude Code (`claude mcp add`).
+- **M5 (em progresso)** ✅ auto-index no serve + `codegraph install` (Claude Code/Codex/
+  opencode); ⬜ get_architecture (hotspots lê `properties.complexity`) + HTTP route nodes
+  + `HTTP_CALLS`.
 - **Qualidade Go ≥85%** ✅ — VTA (substituiu CHA) + arquivos de teste + recall de
   closures/self-edges (callers cobra 100%, gh-cli 100%), medição intra-repo. Track de
   paper/eval na memória.

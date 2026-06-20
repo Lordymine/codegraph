@@ -93,13 +93,22 @@ Handles `initialize`, `tools/list`, `tools/call`. Tools: `search`, `callers`,
 `callees`, `neighbors`, `similar`, `dead_code`, `snippet`, `detect_changes`. Swap for
 `github.com/mark3labs/mcp-go` if it grows.
 
+The `mcp` command (M5) auto-indexes in a background goroutine on startup and gates
+tool calls behind a readiness check (`Server.SetReadiness`) — the handshake answers
+immediately, tools report "indexing" until the graph is built, never a half-written
+store. The repo is resolved from `$CLAUDE_PROJECT_DIR` (set by Claude Code) or cwd, so
+one registration serves any repo. `codegraph install` (`internal/install`) registers
+the server into detected agents — Claude Code/Codex via their add-CLI, opencode via a
+config-file merge — and prints a manual snippet for the rest.
+
 ## CLI (cmd/codegraph)
 
 ```
 codegraph index   <path>               build the graph (no-op if unchanged)
 codegraph stats   <path>               node/edge counts
 codegraph changes <path>               files changed since the last index
-codegraph mcp     <path>               serve MCP over stdio for a repo
+codegraph install                      register the MCP server into detected agents
+codegraph mcp     <path>               serve MCP over stdio (auto-indexes in background)
 codegraph cli     <tool> <path> <json> run one query tool (no MCP)
 ```
 
@@ -116,7 +125,8 @@ internal/scip/        scip-typescript runner + SCIP→CALLS attribution (TS/JS, 
 internal/gocalls/     go/packages + VTA call graph → CALLS (Go, M2; cha.go = generics-safe)
 internal/similar/     MinHash signature + LSH banding → SIMILAR_TO near-clone edges (M4)
 internal/query/       query.go (Engine → compact Refs)
-internal/mcp/         server.go (stdio JSON-RPC)
+internal/mcp/         server.go (stdio JSON-RPC + auto-index readiness gate)
+internal/install/     register the MCP server into detected agents (M5)
 internal/bench/       token/tool-call/speed benchmark harness
 internal/quality/     answer-quality harness (question gen + scoring)
 docs/                 UPSTREAM.md, ARCHITECTURE.md, ROADMAP.md, QUALITY.md, BENCHMARK.md
