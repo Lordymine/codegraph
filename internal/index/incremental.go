@@ -2,6 +2,7 @@ package index
 
 import (
 	"os"
+	"strings"
 
 	"github.com/Lordymine/codegraph/internal/graph"
 )
@@ -53,4 +54,34 @@ func DetectChanges(store *graph.Store, project, root string) (Changes, error) {
 		}
 	}
 	return ch, nil
+}
+
+// scopeOf returns the CALLS scope a repo-relative file belongs to. Go files share
+// the one "go" scope (go/packages + VTA is whole-module); a TS/JS file belongs to
+// the tsconfig-project directory that most tightly encloses it, or "" (the repo-root
+// scip run) when no subproject does. Scopes are the unit of incremental re-resolution.
+func scopeOf(rel string, tsconfigDirs []string) string {
+	if strings.HasSuffix(rel, ".go") {
+		return "go"
+	}
+	best, bestLen := "", -1
+	for _, d := range tsconfigDirs {
+		if d != "" && (rel == d || strings.HasPrefix(rel, d+"/")) && len(d) > bestLen {
+			best, bestLen = d, len(d)
+		}
+	}
+	return best
+}
+
+// changedScopes is the set of CALLS scopes touched by a change set — exactly the
+// scopes whose resolver must re-run. A scope absent from the result has no changed
+// file and reuses its stored edges.
+func changedScopes(ch Changes, tsconfigDirs []string) map[string]bool {
+	out := map[string]bool{}
+	for _, group := range [][]string{ch.Changed, ch.Added, ch.Deleted} {
+		for _, rel := range group {
+			out[scopeOf(rel, tsconfigDirs)] = true
+		}
+	}
+	return out
 }

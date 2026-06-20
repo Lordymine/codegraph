@@ -76,6 +76,47 @@ func TestDetectChanges(t *testing.T) {
 	}
 }
 
+// TestChangedScopes pins the gating brain of scope-incremental CALLS: from a change
+// set, which CALLS scopes must re-resolve. A Go file touches the one "go" scope; a TS
+// file touches its enclosing tsconfig-project; untouched scopes are absent (reused).
+func TestChangedScopes(t *testing.T) {
+	tsdirs := []string{"apps/api", "apps/web"}
+
+	// Touch Go, app-api and app-web -> all three scopes re-resolve.
+	all := changedScopes(Changes{
+		Changed: []string{"apps/api/src/x.ts", "cmd/gh/main.go"},
+		Added:   []string{"apps/web/y.tsx"},
+		Deleted: []string{"apps/api/old.ts"},
+	}, tsdirs)
+	if !sameSet(all, map[string]bool{"go": true, "apps/api": true, "apps/web": true}) {
+		t.Errorf("all scopes: got %v", all)
+	}
+
+	// Edit only an app-api file -> app-web and go stay untouched (reused).
+	one := changedScopes(Changes{Changed: []string{"apps/api/src/x.ts"}}, tsdirs)
+	if !sameSet(one, map[string]bool{"apps/api": true}) {
+		t.Errorf("single scope: got %v, want {apps/api}", one)
+	}
+
+	// A TS file outside any tsconfig-project maps to the root ("") scope.
+	root := changedScopes(Changes{Changed: []string{"loose.ts"}}, tsdirs)
+	if !sameSet(root, map[string]bool{"": true}) {
+		t.Errorf("root scope: got %v, want {\"\"}", root)
+	}
+}
+
+func sameSet(a, b map[string]bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k := range a {
+		if !b[k] {
+			return false
+		}
+	}
+	return true
+}
+
 // TestRun_NoOpWhenUnchanged pins the first user-facing incremental win: re-running
 // Run on an unchanged repo skips the whole pipeline (instant) instead of re-resolving
 // CALLS. Proven with a sentinel node that a real re-index (ReplaceProject) would wipe:
