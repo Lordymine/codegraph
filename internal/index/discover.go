@@ -42,11 +42,13 @@ var hardIgnoreDir = map[string]bool{
 }
 
 // Discover walks root and returns indexable source files. It honors directory
-// hard-ignores and a simple .cbmignore (one glob per line, repo-relative).
-// NOTE: full .gitignore semantics are a later milestone; this is the 80% case.
+// hard-ignores plus the repo's .gitignore and .cbmignore — so a repo's vendored
+// deps and build artifacts (e.g. a Go module cache under tmp/) don't flood the
+// graph. Common-case ignore semantics only: directory/name patterns, globs, and
+// root-anchored paths; negation (`!`) and nested .gitignore files are not honored.
 func Discover(root string) ([]SourceFile, error) {
 	root, _ = filepath.Abs(root)
-	ignore := loadCbmIgnore(root)
+	ignore := loadIgnore(root)
 
 	var files []SourceFile
 	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
@@ -77,36 +79,63 @@ func Discover(root string) ([]SourceFile, error) {
 	return files, err
 }
 
-type cbmIgnore struct{ globs []string }
+type ignoreSet struct{ patterns []string }
 
-func loadCbmIgnore(root string) cbmIgnore {
-	f, err := os.Open(filepath.Join(root, ".cbmignore"))
+// loadIgnore reads the repo's .gitignore and .cbmignore into one matcher.
+func loadIgnore(root string) ignoreSet {
+	var pats []string
+	pats = append(pats, readIgnoreFile(filepath.Join(root, ".gitignore"))...)
+	pats = append(pats, readIgnoreFile(filepath.Join(root, ".cbmignore"))...)
+	return ignoreSet{patterns: pats}
+}
+
+func readIgnoreFile(file string) []string {
+	f, err := os.Open(file)
 	if err != nil {
-		return cbmIgnore{}
+		return nil
 	}
 	defer f.Close()
-	var globs []string
+	var out []string
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "!") {
+			continue // blank, comment, or unsupported negation
 		}
-		globs = append(globs, strings.TrimSuffix(filepath.ToSlash(line), "/"))
+		out = append(out, filepath.ToSlash(line))
 	}
-	return cbmIgnore{globs: globs}
+	return out
 }
 
-func (c cbmIgnore) matchDir(rel string) bool  { return c.match(rel) }
-func (c cbmIgnore) matchFile(rel string) bool { return c.match(rel) }
+func (ig ignoreSet) matchDir(rel string) bool  { return ig.match(rel) }
+func (ig ignoreSet) matchFile(rel string) bool { return ig.match(rel) }
 
-func (c cbmIgnore) match(rel string) bool {
-	for _, g := range c.globs {
-		g = strings.TrimPrefix(g, "**/")
-		if rel == g || strings.HasPrefix(rel, g+"/") || strings.HasSuffix(rel, strings.TrimPrefix(g, "/")) {
-			return true
+// match applies common-case .gitignore semantics: a pattern with no slash matches
+// that basename at any depth (file or dir); a pattern with a slash is anchored to
+// the repo root (exact, directory-prefix, or glob over the full relative path).
+func (ig ignoreSet) match(rel string) bool {
+	base := rel
+	if i := strings.LastIndexByte(rel, '/'); i >= 0 {
+		base = rel[i+1:]
+	}
+	for _, p := range ig.patterns {
+		p = strings.TrimPrefix(p, "**/")
+		trimmed := strings.TrimSuffix(p, "/")
+		if trimmed == "" {
+			continue
 		}
-		if ok, _ := filepath.Match(g, filepath.Base(rel)); ok {
+		name := strings.TrimPrefix(trimmed, "/")
+		anchored := strings.HasPrefix(trimmed, "/") || strings.Contains(name, "/")
+		if anchored {
+			if rel == name || strings.HasPrefix(rel, name+"/") {
+				return true
+			}
+			if ok, _ := filepath.Match(name, rel); ok {
+				return true
+			}
+			continue
+		}
+		if ok, _ := filepath.Match(name, base); ok {
 			return true
 		}
 	}
