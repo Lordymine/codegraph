@@ -474,7 +474,11 @@ func ftsQuery(q string) string {
 // edgeType filters by relationship when non-empty.
 func (s *Store) Neighbors(project, qualifiedName, direction, edgeType string, limit int) ([]Node, error) {
 	if limit <= 0 {
-		limit = 50
+		// callers/callees/neighbors/similar are exhaustive relationship queries, so a
+		// low cap turns a recall ceiling into a wrong answer (gh-cli's iostreams.Test
+		// has 448 callers). 500 covers real hubs while staying bounded against a
+		// pathological "called everywhere" symbol; callers can pass an explicit limit.
+		limit = 500
 	}
 	// The type filter is embedded per-SELECT so it also applies to the "both"
 	// UNION (one clause in each arm) — that's what lets `similar` ask for just
