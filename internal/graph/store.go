@@ -269,6 +269,113 @@ func (s *Store) TopByOutboundCalls(project string, limit int) ([]Node, error) {
 	return out, rows.Err()
 }
 
+// HubCount is a call hub plus how many distinct callers point at it.
+type HubCount struct {
+	Node    Node
+	Callers int
+}
+
+// CallHubs returns the most-called nodes with their inbound-CALLS count — the call
+// hotspots for get_architecture (TopByInboundCalls without the count loses the metric).
+func (s *Store) CallHubs(project string, limit int) ([]HubCount, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	q := `SELECT ` + ftsCols("n.") + `, COUNT(*) FROM edges e
+		JOIN nodes n ON n.id = e.target_id
+		WHERE e.project=? AND e.type='CALLS'
+		GROUP BY e.target_id
+		ORDER BY COUNT(*) DESC, n.qualified_name ASC
+		LIMIT ?`
+	rows, err := s.db.Query(q, project, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []HubCount
+	for rows.Next() {
+		var n Node
+		var props string
+		var count int
+		if err := rows.Scan(&n.ID, &n.Project, &n.Label, &n.Name, &n.QualifiedName, &n.FilePath, &n.StartLine, &n.EndLine, &props, &count); err != nil {
+			return nil, err
+		}
+		if props != "" {
+			_ = json.Unmarshal([]byte(props), &n.Props)
+		}
+		out = append(out, HubCount{Node: n, Callers: count})
+	}
+	return out, rows.Err()
+}
+
+// TopByComplexity returns Function/Method nodes ranked by stored cyclomatic
+// complexity (properties.complexity), highest first — the complexity hotspots.
+func (s *Store) TopByComplexity(project string, limit int) ([]Node, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+	q := `SELECT ` + ftsCols("n.") + ` FROM nodes n
+		WHERE n.project=? AND n.label IN ('Function','Method')
+		AND json_extract(n.properties,'$.complexity') IS NOT NULL
+		ORDER BY CAST(json_extract(n.properties,'$.complexity') AS INTEGER) DESC, n.qualified_name ASC
+		LIMIT ?`
+	rows, err := s.db.Query(q, project, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Node
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
+// LabelCounts / EdgeTypeCounts / LanguageCounts are the headline aggregates for
+// get_architecture: nodes per label, edges per type, and File nodes per language.
+func (s *Store) LabelCounts(project string) (map[string]int, error) {
+	return s.countBy(`SELECT label, COUNT(*) FROM nodes WHERE project=? GROUP BY label`, project)
+}
+
+func (s *Store) EdgeTypeCounts(project string) (map[string]int, error) {
+	return s.countBy(`SELECT type, COUNT(*) FROM edges WHERE project=? GROUP BY type`, project)
+}
+
+func (s *Store) LanguageCounts(project string) (map[string]int, error) {
+	return s.countBy(`SELECT json_extract(properties,'$.lang'), COUNT(*) FROM nodes WHERE project=? AND label='File' GROUP BY 1`, project)
+}
+
+// FileSymbolCounts returns symbol count per file (File nodes excluded) — the query
+// layer folds these into per-directory package stats.
+func (s *Store) FileSymbolCounts(project string) (map[string]int, error) {
+	return s.countBy(`SELECT file_path, COUNT(*) FROM nodes WHERE project=? AND label<>'File' GROUP BY file_path`, project)
+}
+
+// countBy runs a `SELECT key, COUNT(*)` grouped query into a map, skipping NULL keys.
+func (s *Store) countBy(q, project string) (map[string]int, error) {
+	rows, err := s.db.Query(q, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]int{}
+	for rows.Next() {
+		var k sql.NullString
+		var n int
+		if err := rows.Scan(&k, &n); err != nil {
+			return nil, err
+		}
+		if k.Valid {
+			out[k.String] = n
+		}
+	}
+	return out, rows.Err()
+}
+
 // FunctionsWithoutInboundCalls returns Function/Method nodes that no in-graph
 // CALLS edge points at — the raw candidate set for the dead-code hint. It is only
 // the graph half of the answer: the query layer still drops entry points

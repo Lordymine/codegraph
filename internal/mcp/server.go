@@ -157,6 +157,12 @@ func (s *Server) callTool(req rpcRequest) {
 		var refs []query.Ref
 		refs, err = s.eng.DeadCode(args.Limit)
 		text = query.CompactRefs(refs)
+	case "get_architecture":
+		var arch query.Architecture
+		arch, err = s.eng.Architecture(args.Limit)
+		if err == nil {
+			text = query.RenderArchitecture(arch)
+		}
 	case "snippet":
 		text, err = s.eng.Snippet(args.File, args.StartLine, args.EndLine)
 	case "detect_changes":
@@ -203,6 +209,8 @@ func toolSpecs() []map[string]any {
 		spec("similar", "Near-clone symbols of this one (SIMILAR_TO edges from MinHash/LSH). Surfaces copy-paste/duplicated logic to refactor. Returns TSV refs (see search).",
 			map[string]any{"qualified_name": str, "limit": num}, "qualified_name"),
 		spec("dead_code", "CANDIDATES for unused private functions/methods: zero inbound CALLS, excluding entry points (exported, decorated, main/init, tests). NOT a delete list — a caller the resolver missed or an indirect reference (function value, interface, reflection) makes a live function look dead, so confirm each (e.g. grep the name) before acting. Returns TSV refs (see search).",
+			map[string]any{"limit": num}),
+		spec("get_architecture", "One-shot repo map from the graph: languages, node/edge counts, top packages by symbol count, and hotspots (most complex functions + most-called hubs). Call this FIRST to orient in an unfamiliar repo instead of grepping. `limit` caps each top-N list (default 10).",
 			map[string]any{"limit": num}),
 		spec("snippet", "Read the source lines for a node. Use only when you must see code.",
 			map[string]any{"file": str, "start_line": num, "end_line": num}, "file"),
