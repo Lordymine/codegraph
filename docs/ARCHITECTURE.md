@@ -50,7 +50,7 @@ callers/callees), `Snippet` (reads file lines), `Stats`, `FileHashes` + `CallEdg
 
 ```
 DetectChanges(root)       per-file sha256 vs the indexed snapshot → no-op if unchanged
-Discover(root)            file walk; hard-ignores + .cbmignore; language detect
+Discover(root)            file walk; hard-ignores + .gitignore + .cbmignore; language detect
   → ExtractDefinitions    per-file, in parallel — tree-sitter AST (treesitter.go)
   → ResolveImports        IMPORTS edges (TS/JS, relative File→File)
   → ResolveCalls          CALLS edges  scip-typescript (TS/JS) + go/packages VTA (Go);

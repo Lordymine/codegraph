@@ -39,7 +39,7 @@ Indexa um repo → grafo SQLite de símbolos + relações; o agente consulta o g
 ## Estado atual — M0–M5 fechados
 
 - Store SQLite 2 tabelas + FTS5 espelhando o upstream (`internal/graph`).
-- Discover (hard-ignores + `.cbmignore`) + detecção de linguagem (Go/TS/JS).
+- Discover (hard-ignores + **`.gitignore`** + `.cbmignore`) + detecção de linguagem (Go/TS/JS).
 - **M1** — definições via **tree-sitter** (`internal/index/treesitter.go`): nós
   File/Function/Method/Class/Interface/Type/Enum/Variable + edges DEFINES, com
   `end_line` real, `is_exported` e decorators (NestJS etc.). Edges IMPORTS (TS/JS).
@@ -57,7 +57,9 @@ Indexa um repo → grafo SQLite de símbolos + relações; o agente consulta o g
 - **M5** — auto-index em background no `mcp` (gate de readiness; repo via
   `$CLAUDE_PROJECT_DIR`/cwd); `codegraph install` (`internal/install`); `get_architecture`
   (mapa do repo, lê a complexidade do M4); nós `Route` HTTP de decorators NestJS
-  (`internal/index/routes.go`).
+  (`internal/index/routes.go`). **Dogfooded** em Go (aurelia) + TS monorepo (LuminaSoft):
+  calls corretos nos dois, sem falso-positivo de rota; o único ruído (código gerado/buildado
+  commitado) sai com `.gitignore`/`.cbmignore`.
 - Query engine (`internal/query`): search / callers / callees / neighbors / similar /
   dead_code / get_architecture / snippet / detect_changes.
 - MCP stdio JSON-RPC (`internal/mcp`); CLI (`cmd/codegraph`): `index | stats | changes |

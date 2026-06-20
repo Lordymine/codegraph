@@ -10,7 +10,7 @@ symbols and *type-checker-accurate* call edges, then answer structural questions
 a fraction of the tokens.**
 
 `Go 1.26` · `SQLite (pure-Go, no cgo for storage)` · `MCP-native` · `MIT`
-· status: **M0–M4 done + self-install — type-checker-accurate calls, incremental, near-clones, one-command agent setup**
+· status: **M0–M5 done — type-checker-accurate calls, incremental, near-clones, repo map, one-command agent setup; dogfooded on real Go + TS repos**
 
 </div>
 

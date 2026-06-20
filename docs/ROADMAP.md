@@ -133,8 +133,14 @@ The graph becomes a tool you actually use, in any repo, from any agent.
   `<VERB> <path>`, located at the handler (`internal/index/routes.go`). Surfaced via
   `search --label Route` and counted by get_architecture.
 
-Dogfooded: registered into Claude Code/Codex/opencode and used live — which caught two
-real bugs (MCP `required:null`, opencode config path). See `docs/QUALITY.md`.
+Dogfooded: registered into Claude Code/Codex/opencode and used live on two real repos —
+a Go app (aurelia) and a TS/Next monorepo (LuminaSoft). That caught and fixed three
+real issues: MCP `required:null` (broke tools/list), the opencode config path, and
+**discovery not honoring `.gitignore`** (it indexed a repo's vendored Go module cache —
+124k nodes / ~4 min — until fixed; now 5k / 12s). Both stacks resolve calls correctly
+(cn/Button in TS, NewRegistry/ClassifyAPIError in Go); the only residual noise is
+committed generated/built code (Prisma client, minified bundles), handled by one
+`.cbmignore` line — no heuristic needed. See `docs/QUALITY.md`.
 
 ## M6 — deferred from M5 (do when proven)
 
