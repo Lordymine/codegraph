@@ -44,3 +44,34 @@ func TestCallEdges_ControllerCallsService(t *testing.T) {
 	}
 	t.Fatalf("missing CALLS %s -> %s; got %+v", ctrlQN, svcQN, edges)
 }
+
+// TestCallEdges_EmitsRecursiveSelfEdge pins that a method referencing itself yields
+// a self-edge — recursion is a real call the eval oracle counts as a caller, so it
+// must not be dropped (parity with the Go resolver).
+func TestCallEdges_EmitsRecursiveSelfEdge(t *testing.T) {
+	file := "apps/api/src/validation-codes/validation-codes.service.ts"
+	svcQN := "proj:" + file + ".ValidationCodesService.getActiveCode"
+
+	idx := &scippb.Index{
+		Documents: []*scippb.Document{{
+			RelativePath: "src/validation-codes/validation-codes.service.ts",
+			Occurrences: []*scippb.Occurrence{
+				// the method's own definition (ignored as a call site)
+				{Symbol: symServiceGetActive, SymbolRoles: int32(scippb.SymbolRole_Definition), Range: []int32{179, 2, 17}},
+				// a recursive reference to itself inside the body (0-based line 183)
+				{Symbol: symServiceGetActive, Range: []int32{183, 8, 21}},
+			},
+		}},
+	}
+	enc := BuildEnclosing([]graph.Node{
+		{Label: graph.LabelMethod, FilePath: file, StartLine: 180, EndLine: 210, QualifiedName: svcQN},
+	})
+
+	edges := CallEdges(idx, "proj", "apps/api", enc)
+	for _, e := range edges {
+		if e.Type == graph.EdgeCalls && e.SourceQN == svcQN && e.TargetQN == svcQN {
+			return // recursive self-edge present
+		}
+	}
+	t.Fatalf("missing recursive self-edge %s -> itself; got %+v", svcQN, edges)
+}

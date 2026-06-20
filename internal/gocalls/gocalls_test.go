@@ -86,6 +86,23 @@ func TestCallEdges_AttributesClosureCallsToEnclosing(t *testing.T) {
 	}
 }
 
+// TestCallEdges_EmitsRecursiveSelfEdge pins that a function calling itself yields a
+// self-edge. Recursion is a genuine call the eval oracle counts as a caller (e.g.
+// cobra's FlagErrorFunc calls itself on c.parent); dropping it understates callers.
+func TestCallEdges_EmitsRecursiveSelfEdge(t *testing.T) {
+	root, err := filepath.Abs("testdata/recursion")
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges, err := CallEdges("test", root, func(string) bool { return true })
+	if err != nil {
+		t.Fatalf("CallEdges: %v", err)
+	}
+	if !hasEdge(edges, "recursion.go.fact", "recursion.go.fact") {
+		t.Errorf("recursive call must emit a self-edge (fact->fact); edges:%s", dumpEdges(edges))
+	}
+}
+
 func hasEdge(edges []graph.Edge, srcTail, dstTail string) bool {
 	for _, e := range edges {
 		if strings.HasSuffix(e.SourceQN, srcTail) && strings.HasSuffix(e.TargetQN, dstTail) {

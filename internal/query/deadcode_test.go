@@ -66,3 +66,45 @@ func TestEngine_DeadCode_FlagsUnusedPrivateOnly(t *testing.T) {
 		}
 	}
 }
+
+// TestEngine_DeadCode_SelfCallDoesNotKeepAlive pins that a recursive call does not
+// rescue a function from the dead-code hint: a private function whose ONLY inbound
+// CALLS edge is its own recursion is still unreachable from the rest of the repo,
+// so it must still be flagged. (Self-edges are kept in the graph for callers, but
+// they don't count as "someone else calls it".)
+func TestEngine_DeadCode_SelfCallDoesNotKeepAlive(t *testing.T) {
+	store, err := graph.Open(filepath.Join(t.TempDir(), "g.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	const project = "proj"
+	if err := store.InsertNodes([]graph.Node{{
+		Project: project, Label: graph.LabelFunction, Name: "loop",
+		QualifiedName: project + ":a.go.loop", FilePath: "a.go", StartLine: 1, EndLine: 2,
+		Props: map[string]any{"is_exported": false},
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.InsertEdges([]graph.Edge{{
+		Project: project, SourceQN: project + ":a.go.loop", TargetQN: project + ":a.go.loop", Type: graph.EdgeCalls,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	eng := NewEngine(store, project, t.TempDir())
+	refs, err := eng.DeadCode(50)
+	if err != nil {
+		t.Fatalf("DeadCode: %v", err)
+	}
+	found := false
+	for _, r := range refs {
+		if r.Name == "loop" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("a only-self-recursive private function is still dead; expected loop flagged, got %v", refs)
+	}
+}

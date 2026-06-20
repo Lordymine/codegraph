@@ -275,10 +275,12 @@ func (s *Store) TopByOutboundCalls(project string, limit int) ([]Node, error) {
 // (exported, decorated, main/init, tests) before reporting, because those have no
 // in-graph caller by design, not because they're dead.
 func (s *Store) FunctionsWithoutInboundCalls(project string) ([]Node, error) {
+	// source_id <> n.id ignores self-edges: a function reachable only by its own
+	// recursion is still unreachable from the rest of the repo, so it stays dead.
 	q := `SELECT ` + ftsCols("n.") + ` FROM nodes n
 		WHERE n.project=? AND n.label IN ('Function','Method')
 		AND NOT EXISTS (
-			SELECT 1 FROM edges e WHERE e.target_id = n.id AND e.type='CALLS'
+			SELECT 1 FROM edges e WHERE e.target_id = n.id AND e.source_id <> n.id AND e.type='CALLS'
 		)
 		ORDER BY n.file_path ASC, n.start_line ASC`
 	rows, err := s.db.Query(q, project)

@@ -67,7 +67,9 @@ func CallEdges(project, root string, known func(qn string) bool) (edges []graph.
 		}
 		for _, out := range node.Out {
 			calleeQN, ok := funcToQN(out.Callee.Func, project, root)
-			if !ok || calleeQN == callerQN || !known(calleeQN) {
+			// A self-edge (recursion) is kept: a function that calls itself is a real
+			// caller of itself, which the eval oracle and IDE find-callers both count.
+			if !ok || !known(calleeQN) {
 				continue
 			}
 			key := callerQN + "\x00" + calleeQN

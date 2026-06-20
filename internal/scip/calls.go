@@ -42,7 +42,9 @@ func CallEdges(index *scippb.Index, project, pathPrefix string, enc Enclosing) [
 				continue
 			}
 			callerQN, ok := enc.At(rel, int(r[0])+1) // SCIP lines are 0-based
-			if !ok || callerQN == calleeQN {
+			// A self-edge (recursion) is kept: a function referencing itself is a real
+			// caller of itself, counted by the eval oracle (parity with the Go resolver).
+			if !ok {
 				continue
 			}
 			key := callerQN + "\x00" + calleeQN
