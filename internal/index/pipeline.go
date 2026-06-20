@@ -86,10 +86,12 @@ func Run(store *graph.Store, root string) (Result, error) {
 		allEdges = append(allEdges, r.edges...)
 	}
 
-	// IMPORTS (always) + CALLS for changed scopes (fresh) + reused CALLS (unchanged).
+	// IMPORTS (always) + CALLS for changed scopes (fresh) + reused CALLS (unchanged)
+	// + SIMILAR_TO near-clones (cross-file, whole node set).
 	allEdges = append(allEdges, ResolveImports(project, files)...)
 	allEdges = append(allEdges, ResolveCalls(project, root, files, allNodes, changed)...)
 	allEdges = append(allEdges, reusedEdges...)
+	allEdges = append(allEdges, ResolveSimilar(project, root, allNodes)...)
 
 	if err := store.InsertNodes(allNodes); err != nil {
 		return Result{}, fmt.Errorf("insert nodes: %w", err)
