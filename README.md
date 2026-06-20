@@ -111,10 +111,11 @@ discover            gitignore/.cbmignore + language detect (Go/TS/TSX/JS)
   → store           SQLite: nodes + edges + FTS5(BM25), QN→id resolved in memory
 ```
 
-Query engine returns compact refs for: **search** (ranked BM25), **callers**,
-**callees**, **neighbors**, **similar** (near-clones), **dead_code** (uncalled private
-functions), **detect_changes** (staleness), and **snippet** (the one tool that returns
-source). All exposed over **MCP (stdio JSON-RPC)** so any MCP-capable agent can use it.
+Query engine returns compact refs for: **get_architecture** (one-shot repo map —
+languages, packages, hotspots), **search** (ranked BM25), **callers**, **callees**,
+**neighbors**, **similar** (near-clones), **dead_code** (uncalled private functions),
+**detect_changes** (staleness), and **snippet** (the one tool that returns source). All
+exposed over **MCP (stdio JSON-RPC)** so any MCP-capable agent can use it.
 
 ## Quick start
 
@@ -203,8 +204,9 @@ after the engineering clears a hard bar:
       gated by changed scope).
 - [x] **M4** — `SIMILAR_TO` via MinHash/LSH + `similar`/`dead_code`/cyclomatic
       complexity; the recall fixes that came with it took Go callers to ~100%.
-- [~] **M5** — MCP polish + distribution: auto-index-on-serve and `codegraph install`
-      (one-command agent setup) **done**; `get_architecture`/hotspots + HTTP routes pending.
+- [x] **M5** — MCP polish + distribution: auto-index-on-serve, `codegraph install`
+      (one-command agent setup), `get_architecture` (repo map + hotspots), and NestJS
+      `Route` nodes. `HTTP_CALLS` deferred to M6 (heuristic, not type-checker-delegated).
 - [x] **Quality harness** — graph 89–94% vs baseline at ~4.5–8× less cost on
       ajuda-aqui/cobra/gh-cli (`docs/QUALITY.md`). Remaining for the paper: scale to N repos.
 

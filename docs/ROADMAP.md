@@ -114,18 +114,36 @@ the enclosing named function (`ssa.Function.Parent()`) + keeping recursive self-
 false positives. Also raised the relationship-query default limit 50→500 so hub answers
 aren't silently truncated. See `docs/QUALITY.md`.
 
-## M5 — MCP polish + distribution (in progress)
+## M5 — MCP polish + distribution ✅ (done)
 
-- ✅ **Auto-index on serve** — `codegraph mcp` indexes in a background goroutine and
-  gates tool calls behind a readiness check, so a freshly-registered server "just
-  works" on any repo (no manual `index` step); M3's no-op keeps it cheap every launch.
-  Resolves the repo from `$CLAUDE_PROJECT_DIR` or cwd.
-- ✅ **`codegraph install`** — registers the MCP server into detected agents: Claude
-  Code & Codex via their add-CLI (user scope, any repo), opencode via a config-file
-  merge that preserves existing config; a manual snippet for the rest (`internal/install`).
-- ⬜ `get_architecture` (languages, packages, entry points, routes, **hotspots** —
-  reads `properties.complexity` from M4) from graph aggregates + community detection.
-- ⬜ HTTP route nodes + `HTTP_CALLS` matching (NestJS controllers ↔ client calls).
+The graph becomes a tool you actually use, in any repo, from any agent.
+
+- **Auto-index on serve** — `codegraph mcp` indexes in a background goroutine and
+  gates tool calls behind a readiness check (`Server.SetReadiness`), so a freshly-
+  registered server "just works" on any repo (no manual `index` step); M3's no-op keeps
+  it cheap every launch. Resolves the repo from `$CLAUDE_PROJECT_DIR` or cwd.
+- **`codegraph install`** — registers the MCP server into detected agents: Claude Code
+  & Codex via their add-CLI (user scope, any repo), opencode via a config-file merge
+  that preserves existing config; a manual snippet for the rest (`internal/install`).
+- **`get_architecture`** — one-shot repo map from graph aggregates: languages, node/
+  edge counts, top packages by symbol, and hotspots (most complex functions — reads
+  the M4 `properties.complexity` — + most-called hubs). Community detection deferred
+  (YAGNI — dir grouping gives the structure cheaply).
+- **HTTP Route nodes** — NestJS `@Controller` + `@Get/@Post/...` → `Route` nodes named
+  `<VERB> <path>`, located at the handler (`internal/index/routes.go`). Surfaced via
+  `search --label Route` and counted by get_architecture.
+
+Dogfooded: registered into Claude Code/Codex/opencode and used live — which caught two
+real bugs (MCP `required:null`, opencode config path). See `docs/QUALITY.md`.
+
+## M6 — deferred from M5 (do when proven)
+
+- ⬜ **`HTTP_CALLS`** (client call-site → `Route`). Deferred deliberately: unlike the
+  rest of the graph it is **not** type-checker-delegated — it's heuristic string
+  matching (extract a URL from `fetch`/`axios`/`HttpClient` calls, match against route
+  patterns). Dynamic URLs (`/users/${id}`) make it low-recall, and a wrong match
+  violates honest precision ("a missing edge beats a wrong one"). Revisit only if a
+  high-precision, literal-anchored version proves worth it.
 - ⬜ Optional: committable `graph.db.zst` team artifact (zstd snapshot + bootstrap).
 
 ## Stretch / maybe-never (YAGNI unless proven)

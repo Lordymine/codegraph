@@ -78,10 +78,18 @@ The Go/TS call resolvers credit calls inside closures to the enclosing named fun
 keep recursive self-edges — recall fixes that took intra-repo callers to ~100% (see
 `docs/QUALITY.md`).
 
+M5: the definitions pass also emits **`Route` nodes** from NestJS decorators
+(`routes.go`) — `@Controller` base + `@Get/@Post/...` path → `<VERB> <path>`, located at
+the handler. `get_architecture` (`query/architecture.go`) aggregates the stored graph
+into a one-shot repo map (languages, node/edge counts, top packages, complexity/call
+hotspots) — the orientation call. `HTTP_CALLS` (client → route) is deferred to M6: it
+would be heuristic string matching, not type-checker-delegated.
+
 ## Query layer (internal/query)
 
-`Engine` exposes the agent-facing operations, each returning `[]Ref` (compact):
-`Search`, `Callers`, `Callees`, `Neighbors`, `Similar`, `DeadCode`, `Snippet`,
+`Engine` exposes the agent-facing operations: `Search`, `Callers`, `Callees`,
+`Neighbors`, `Similar`, `DeadCode` (each returning `[]Ref`), `Architecture` (the repo
+map — languages/counts/packages/hotspots, rendered compactly), `Snippet`, and
 `DetectChanges`. This is the contract both the CLI and the MCP server use, so behavior is
 identical across entry points. Relationship queries default to limit 500 (a hub can have
 hundreds of callers — a low cap would silently truncate the answer).
@@ -120,7 +128,7 @@ absolute repo path (matches upstream convention).
 ```
 cmd/codegraph/        CLI entrypoint + subcommands (index/stats/mcp/bench/quality/cli)
 internal/graph/       model.go (Node/Edge/labels/edge-types) + store.go (SQLite)
-internal/index/       discover.go, definitions.go + treesitter.go + complexity.go, imports.go, calls.go, similar.go, incremental.go, pipeline.go
+internal/index/       discover.go, definitions.go + treesitter.go + complexity.go + routes.go, imports.go, calls.go, similar.go, incremental.go, pipeline.go
 internal/scip/        scip-typescript runner + SCIP→CALLS attribution (TS/JS, M2)
 internal/gocalls/     go/packages + VTA call graph → CALLS (Go, M2; cha.go = generics-safe)
 internal/similar/     MinHash signature + LSH banding → SIMILAR_TO near-clone edges (M4)

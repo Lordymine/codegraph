@@ -36,7 +36,7 @@ Indexa um repo → grafo SQLite de símbolos + relações; o agente consulta o g
    `CGO_ENABLED=1` + gcc. scip-typescript entra como ferramenta de build (Node), não
    liga no binário.
 
-## Estado atual — M0 + M1 + M2 + M3 + M4 fechados
+## Estado atual — M0–M5 fechados
 
 - Store SQLite 2 tabelas + FTS5 espelhando o upstream (`internal/graph`).
 - Discover (hard-ignores + `.cbmignore`) + detecção de linguagem (Go/TS/JS).
@@ -54,13 +54,14 @@ Indexa um repo → grafo SQLite de símbolos + relações; o agente consulta o g
   (zero CALLS de entrada, fora de entry points); complexidade ciclomática em
   `properties.complexity` (`internal/index/complexity.go`). De brinde, consertos de
   recall do call-graph (closures + self-edges) que levaram callers Go a 100%.
+- **M5** — auto-index em background no `mcp` (gate de readiness; repo via
+  `$CLAUDE_PROJECT_DIR`/cwd); `codegraph install` (`internal/install`); `get_architecture`
+  (mapa do repo, lê a complexidade do M4); nós `Route` HTTP de decorators NestJS
+  (`internal/index/routes.go`).
 - Query engine (`internal/query`): search / callers / callees / neighbors / similar /
-  dead_code / snippet / detect_changes.
-- MCP stdio JSON-RPC (`internal/mcp`) com **auto-index em background no `mcp`** (gate
-  de readiness; repo via `$CLAUDE_PROJECT_DIR`/cwd) e **`codegraph install`**
-  (`internal/install`: registra em Claude Code/Codex via CLI próprio + opencode via
-  merge de config). CLI (`cmd/codegraph`): `index | stats | changes | install | mcp |
-  bench | quality | cli`.
+  dead_code / get_architecture / snippet / detect_changes.
+- MCP stdio JSON-RPC (`internal/mcp`); CLI (`cmd/codegraph`): `index | stats | changes |
+  install | mcp | bench | quality | cli`.
 - **Prova M2:** `callees(ResolveCalls)` → as 6 funções que ela chama;
   `callers(Store.InsertEdges)` → `pipeline.Run`; os 4 `getActiveCode` homônimos do
   ajuda-aqui desambiguados.
@@ -96,9 +97,10 @@ Store: `~/.cache/codegraph/<project>.db`. Original clonado (shallow) em
 - **M2** ✅ CALLS edges via indexadores batch (scip-typescript + go/packages CHA).
 - **M3** ✅ incremental: hash por arquivo + no-op + CALLS gated por escopo + `detect_changes`.
 - **M4** ✅ SIMILAR_TO (MinHash/LSH) + `similar`/`dead_code` + complexidade ciclomática.
-- **M5 (em progresso)** ✅ auto-index no serve + `codegraph install` (Claude Code/Codex/
-  opencode); ⬜ get_architecture (hotspots lê `properties.complexity`) + HTTP route nodes
-  + `HTTP_CALLS`.
+- **M5** ✅ auto-index no serve + `codegraph install` (Claude Code/Codex/opencode) +
+  `get_architecture` + Route nodes NestJS. Dogfooded (registrado e usado de verdade).
+- **M6 (próximo)** ⬜ `HTTP_CALLS` (deferido — heurística de string, não type-checked;
+  ver ROADMAP) + opcional `graph.db.zst`.
 - **Qualidade Go ≥85%** ✅ — VTA (substituiu CHA) + arquivos de teste + recall de
   closures/self-edges (callers cobra 100%, gh-cli 100%), medição intra-repo. Track de
   paper/eval na memória.
