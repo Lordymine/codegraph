@@ -71,11 +71,26 @@ its own benchmark grades them (PARTIAL, not FAIL). See `docs/QUALITY.md`.
 bindings live in a `providers` array and are invisible to scip and every other
 resolver — they'd need a dedicated framework-semantic pass (deferred, M5).
 
-## M3 — Incremental indexing — NEXT
+## M3 — Incremental indexing ✅ (done)
 
-- Persist a per-file content hash (sha256 + mtime).
-- `detect_changes`: re-index only changed files; diff nodes/edges; map to affected
-  symbols. Avoids the full re-index cost on every edit.
+Re-indexing is cheap to repeat — the expensive whole-project CALLS pass (scip /
+go+VTA) no longer re-runs when it doesn't have to.
+
+- **Per-file content hash** (sha256) on the File node; `DetectChanges` compares the
+  files on disk against it → Changed/Added/Deleted.
+- **No-op when unchanged** — `Run` skips the whole pipeline if nothing changed
+  (cobra: 1.77s full → 0.06s reused, ~29×); the win scales with the CALLS cost.
+- **Scope-gated CALLS** — a scope is one tsconfig-project (scip) or the Go module
+  (go+VTA). A re-index re-resolves only the scopes whose files changed and reuses the
+  stored edges of the rest (read before the wipe via `Store.CallEdges`, kept by
+  `scopeOf`/`changedScopes`). Editing one app of a monorepo no longer re-runs scip for
+  every other app. The full-index path is unchanged (a never-indexed project marks
+  every scope changed → nothing reused).
+- **`detect_changes` tool + `codegraph changes <repo>`** — report the change set
+  (compact TSV) so an agent can tell whether the graph is stale before trusting it.
+
+Honest limit: true *per-file* CALLS incrementality is impossible (the resolvers are
+whole-scope), so the granularity is the scope, not the file — the realistic win.
 
 ## M4 — Similarity + light enrichment
 

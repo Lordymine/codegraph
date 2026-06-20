@@ -43,15 +43,18 @@ nodes_fts  -- FTS5(name, qualified_name, label, file_path) → BM25
 `Store` (internal/graph/store.go) is the only thing that touches SQL:
 `InsertNodes` (keeps FTS in sync), `InsertEdges` (resolves QN→id, drops
 unresolved), `Search` (BM25), `Neighbors` (in/out/both, the basis for
-callers/callees), `Snippet` (reads file lines), `Stats`, `ReplaceProject`.
+callers/callees), `Snippet` (reads file lines), `Stats`, `FileHashes` + `CallEdges`
+(incremental reuse), `ReplaceProject`.
 
 ## Indexing pipeline (internal/index)
 
 ```
+DetectChanges(root)       per-file sha256 vs the indexed snapshot → no-op if unchanged
 Discover(root)            file walk; hard-ignores + .cbmignore; language detect
   → ExtractDefinitions    per-file, in parallel — tree-sitter AST (treesitter.go)
   → ResolveImports        IMPORTS edges (TS/JS, relative File→File)
-  → ResolveCalls          CALLS edges  scip-typescript (TS/JS) + go/packages CHA (Go)
+  → ResolveCalls          CALLS edges  scip-typescript (TS/JS) + go/packages VTA (Go);
+                          only changed scopes re-resolve, the rest are reused (M3)
   → Store.InsertNodes/Edges
 ```
 
@@ -61,29 +64,32 @@ official **tree-sitter** (cgo, one parser per goroutine) and emits `File`/`Funct
 real end lines, `is_exported`, and class/method decorators. `ResolveImports`
 (imports.go) resolves relative TS/JS imports to File nodes → `IMPORTS` edges (package
 and unresolved imports drop). `ResolveCalls` (calls.go) emits `CALLS` edges via the M2
-batch indexers — scip-typescript for TS/JS (`internal/scip`) and go/packages + a CHA
+batch indexers — scip-typescript for TS/JS (`internal/scip`) and go/packages + a VTA
 call graph for Go (`internal/gocalls`) — dropping callees that aren't known graph symbols.
+Incremental (M3, incremental.go): `DetectChanges` gates a no-op when nothing changed, and
+a re-index re-resolves only the changed scopes, reusing the stored CALLS edges of the rest.
 
 ## Query layer (internal/query)
 
 `Engine` exposes the agent-facing operations, each returning `[]Ref` (compact):
-`Search`, `Callers`, `Callees`, `Neighbors`, `Snippet`. This is the contract both
-the CLI and the MCP server use, so behavior is identical across entry points.
+`Search`, `Callers`, `Callees`, `Neighbors`, `Snippet`, `DetectChanges`. This is the
+contract both the CLI and the MCP server use, so behavior is identical across entry points.
 
 ## MCP server (internal/mcp)
 
 Minimal stdio JSON-RPC 2.0 (newline-delimited — the MCP convention), stdlib only.
 Handles `initialize`, `tools/list`, `tools/call`. Tools: `search`, `callers`,
-`callees`, `neighbors`, `snippet`. Swap for `github.com/mark3labs/mcp-go` if it
-grows.
+`callees`, `neighbors`, `snippet`, `detect_changes`. Swap for
+`github.com/mark3labs/mcp-go` if it grows.
 
 ## CLI (cmd/codegraph)
 
 ```
-codegraph index <path>                 build the graph
-codegraph stats <path>                 node/edge counts
-codegraph mcp   <path>                 serve MCP over stdio for a repo
-codegraph cli   <tool> <path> <json>   run one query tool (no MCP)
+codegraph index   <path>               build the graph (no-op if unchanged)
+codegraph stats   <path>               node/edge counts
+codegraph changes <path>               files changed since the last index
+codegraph mcp     <path>               serve MCP over stdio for a repo
+codegraph cli     <tool> <path> <json> run one query tool (no MCP)
 ```
 
 Store path: `~/.cache/codegraph/<project>.db`. Project slug derived from the
@@ -94,9 +100,9 @@ absolute repo path (matches upstream convention).
 ```
 cmd/codegraph/        CLI entrypoint + subcommands (index/stats/mcp/bench/quality/cli)
 internal/graph/       model.go (Node/Edge/labels/edge-types) + store.go (SQLite)
-internal/index/       discover.go, definitions.go + treesitter.go, imports.go, calls.go, pipeline.go
+internal/index/       discover.go, definitions.go + treesitter.go, imports.go, calls.go, incremental.go, pipeline.go
 internal/scip/        scip-typescript runner + SCIP→CALLS attribution (TS/JS, M2)
-internal/gocalls/     go/packages + CHA call graph → CALLS (Go, M2)
+internal/gocalls/     go/packages + VTA call graph → CALLS (Go, M2; cha.go = generics-safe)
 internal/query/       query.go (Engine → compact Refs)
 internal/mcp/         server.go (stdio JSON-RPC)
 internal/bench/       token/tool-call/speed benchmark harness

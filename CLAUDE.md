@@ -36,7 +36,7 @@ Indexa um repo → grafo SQLite de símbolos + relações; o agente consulta o g
    `CGO_ENABLED=1` + gcc. scip-typescript entra como ferramenta de build (Node), não
    liga no binário.
 
-## Estado atual — M0 + M1 + M2 fechados
+## Estado atual — M0 + M1 + M2 + M3 fechados
 
 - Store SQLite 2 tabelas + FTS5 espelhando o upstream (`internal/graph`).
 - Discover (hard-ignores + `.cbmignore`) + detecção de linguagem (Go/TS/JS).
@@ -47,9 +47,13 @@ Indexa um repo → grafo SQLite de símbolos + relações; o agente consulta o g
 - **M2** — edges **CALLS** com precisão de type-checker: `scip-typescript` (TS/JS,
   `internal/scip`) + `go/packages` + CHA (Go, `internal/gocalls`), costurados em
   `internal/index/calls.go`. Tags `resolver`/`confidence` nas arestas.
-- Query engine (`internal/query`): search / callers / callees / neighbors / snippet.
-- MCP stdio JSON-RPC (`internal/mcp`); CLI (`cmd/codegraph`): `index | stats | mcp |
-  bench | quality | cli`.
+- **M3** — indexação incremental (`internal/index/incremental.go`): sha256 por arquivo,
+  `DetectChanges`, **no-op quando intacto** (cobra 1.77s→0.06s) e **CALLS gated por
+  escopo** (re-roda scip/Go só dos escopos com arquivo mudado, reusa o resto).
+- Query engine (`internal/query`): search / callers / callees / neighbors / snippet /
+  detect_changes.
+- MCP stdio JSON-RPC (`internal/mcp`); CLI (`cmd/codegraph`): `index | stats | changes |
+  mcp | bench | quality | cli`.
 - **Prova M2:** `callees(ResolveCalls)` → as 6 funções que ela chama;
   `callers(Store.InsertEdges)` → `pipeline.Run`; os 4 `getActiveCode` homônimos do
   ajuda-aqui desambiguados.
@@ -78,9 +82,8 @@ Store: `~/.cache/codegraph/<project>.db`. Original clonado (shallow) em
 
 - **M1** ✅ tree-sitter + superfície TS completa + IMPORTS.
 - **M2** ✅ CALLS edges via indexadores batch (scip-typescript + go/packages CHA).
-- **M3 (próximo)** — incremental por hash de arquivo (hoje todo `index` faz
-  `ReplaceProject` e re-indexa tudo).
-- **M4** SIMILAR_TO (MinHash/LSH) · **M5** get_architecture + registrar no Claude Code.
+- **M3** ✅ incremental: hash por arquivo + no-op + CALLS gated por escopo + `detect_changes`.
+- **M4 (próximo)** SIMILAR_TO (MinHash/LSH) · **M5** get_architecture + registrar no Claude Code.
 - **Qualidade Go ≥85%** ✅ — VTA (substituiu CHA) + carregar arquivos de teste,
   medição intra-repo. Track de paper/eval na memória.
 
