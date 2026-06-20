@@ -16,13 +16,19 @@ import (
 // best-effort: a subproject whose scip run fails contributes no edges rather than
 // failing the whole index. Go call resolution is in-process via go/packages + a CHA
 // call graph (internal/gocalls).
-func ResolveCalls(project, root string, files []SourceFile, nodes []graph.Node) []graph.Edge {
+// changed gates which CALLS scopes are re-resolved: nil re-resolves everything (a
+// full index); otherwise only scopes present in the set run (each tsconfig dir, and
+// "go"). Unchanged scopes' edges are reused by the caller, not recomputed here.
+func ResolveCalls(project, root string, files []SourceFile, nodes []graph.Node, changed map[string]bool) []graph.Edge {
 	enc := scip.BuildEnclosing(nodes)
 	var edges []graph.Edge
 
 	// TS/JS: scip-typescript per tsconfig subproject. dir is repo-relative; "" means
 	// the repo root (a single-package repo whose only tsconfig is at the top).
 	for _, dir := range tsconfigDirs(root) {
+		if changed != nil && !changed[dir] {
+			continue // scope unchanged: its edges are reused, not re-resolved
+		}
 		abs := filepath.Join(root, filepath.FromSlash(dir))
 		name := dir
 		if name == "" {
@@ -36,8 +42,8 @@ func ResolveCalls(project, root string, files []SourceFile, nodes []graph.Node) 
 		edges = append(edges, scip.CallEdges(idx, project, dir, enc)...)
 	}
 
-	// Go: in-process go/packages + CHA call graph.
-	if hasGo(files) {
+	// Go: in-process go/packages + VTA call graph (one whole-module "go" scope).
+	if (changed == nil || changed["go"]) && hasGo(files) {
 		if goEdges, err := gocalls.CallEdges(project, root, enc.Has); err == nil {
 			edges = append(edges, goEdges...)
 		}

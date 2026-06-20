@@ -105,6 +105,67 @@ func TestChangedScopes(t *testing.T) {
 	}
 }
 
+// TestRun_ReusesUnchangedScopeCalls pins scope-gated CALLS: changing a file in one
+// scope must NOT re-resolve another, untouched scope — its stored CALLS edges are
+// reused. Here only a.ts changes, so the Go scope stays put; a sentinel Go edge that
+// the resolver would never produce (helper->main) must survive, proving Go was reused
+// rather than re-run. Uses real go/packages (no scip, no network).
+func TestRun_ReusesUnchangedScopeCalls(t *testing.T) {
+	dir := t.TempDir()
+	write := func(rel, content string) {
+		p := filepath.Join(dir, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("go.mod", "module testmod\n\ngo 1.21\n")
+	write("main.go", "package main\n\nfunc helper() int { return 1 }\n\nfunc main() { _ = helper() }\n")
+	write("a.ts", "export const a = 1\n")
+
+	store, err := graph.Open(filepath.Join(dir, "g.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	project := ProjectName(dir)
+	if _, err := Run(store, dir); err != nil {
+		t.Fatalf("run1: %v", err)
+	}
+
+	qn := func(s string) string { return project + ":" + s }
+	hasCall := func(srcQN, dstName string) bool {
+		ns, _ := store.Neighbors(project, srcQN, "out", string(graph.EdgeCalls), 20)
+		for _, n := range ns {
+			if n.Name == dstName {
+				return true
+			}
+		}
+		return false
+	}
+	if !hasCall(qn("main.go.main"), "helper") {
+		t.Fatal("setup: expected real Go CALLS main->helper after first index")
+	}
+
+	// A sentinel Go edge the resolver would never emit (helper does not call main).
+	if _, _, err := store.InsertEdges([]graph.Edge{{
+		Project: project, SourceQN: qn("main.go.helper"), TargetQN: qn("main.go.main"), Type: graph.EdgeCalls,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Change only a.ts -> the Go scope is untouched, so its CALLS must be reused.
+	write("a.ts", "export const a = 2\n")
+	if _, err := Run(store, dir); err != nil {
+		t.Fatalf("run2: %v", err)
+	}
+	if !hasCall(qn("main.go.helper"), "main") {
+		t.Error("unchanged Go scope: stored CALLS (incl. the sentinel) must be reused, not re-resolved away")
+	}
+}
+
 func sameSet(a, b map[string]bool) bool {
 	if len(a) != len(b) {
 		return false

@@ -73,6 +73,27 @@ func scopeOf(rel string, tsconfigDirs []string) string {
 	return best
 }
 
+// reusableCallEdges returns the stored CALLS edges whose caller's scope is NOT being
+// re-resolved — they survive a re-index verbatim (resolved by qualified name on
+// insert, so they tolerate the node re-id). Must be read before ReplaceProject.
+func reusableCallEdges(store *graph.Store, project string, changed map[string]bool, tsconfigDirs []string) ([]graph.Edge, error) {
+	stored, err := store.CallEdges(project)
+	if err != nil {
+		return nil, err
+	}
+	var out []graph.Edge
+	for _, e := range stored {
+		if changed[scopeOf(e.SourceFile, tsconfigDirs)] {
+			continue // this scope is being re-resolved; drop the old edge
+		}
+		out = append(out, graph.Edge{
+			Project: project, SourceQN: e.SourceQN, TargetQN: e.TargetQN,
+			Type: graph.EdgeCalls, Props: e.Props,
+		})
+	}
+	return out, nil
+}
+
 // changedScopes is the set of CALLS scopes touched by a change set — exactly the
 // scopes whose resolver must re-run. A scope absent from the result has no changed
 // file and reuses its stored edges.

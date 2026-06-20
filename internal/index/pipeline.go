@@ -26,15 +26,28 @@ func Run(store *graph.Store, root string) (Result, error) {
 	root, _ = filepath.Abs(root)
 	project := ProjectName(root)
 
-	// Incremental no-op: if no source file changed since the last index, skip the
-	// whole pipeline (notably the expensive whole-project CALLS re-resolution) and
-	// reuse the stored graph. A never-indexed project reports every file as Added,
-	// so this only fires when there is a prior index to reuse.
-	if ch, err := DetectChanges(store, project, root); err == nil && !ch.Any() {
+	changes, err := DetectChanges(store, project, root)
+	if err != nil {
+		return Result{}, err
+	}
+	// Incremental no-op: nothing changed since the last index -> skip the whole
+	// pipeline (notably the expensive CALLS re-resolution) and reuse the stored graph.
+	// A never-indexed project reports every file as Added, so this only fires when
+	// there is a prior index to reuse.
+	if !changes.Any() {
 		if n, e, err := store.Stats(project); err == nil && n > 0 {
 			files, _ := store.FileHashes(project)
 			return Result{Project: project, Files: len(files), Nodes: n, EdgesKept: e, Reused: true}, nil
 		}
+	}
+
+	// Scope-gated CALLS: re-resolve only the scopes whose files changed, and reuse
+	// the stored edges of the rest (read now, before ReplaceProject wipes them).
+	tsdirs := tsconfigDirs(root)
+	changed := changedScopes(changes, tsdirs)
+	reusedEdges, err := reusableCallEdges(store, project, changed, tsdirs)
+	if err != nil {
+		return Result{}, err
 	}
 
 	files, err := Discover(root)
@@ -73,9 +86,10 @@ func Run(store *graph.Store, root string) (Result, error) {
 		allEdges = append(allEdges, r.edges...)
 	}
 
-	// IMPORTS edges (TS/JS) + CALLS edges (scip-typescript per subproject).
+	// IMPORTS (always) + CALLS for changed scopes (fresh) + reused CALLS (unchanged).
 	allEdges = append(allEdges, ResolveImports(project, files)...)
-	allEdges = append(allEdges, ResolveCalls(project, root, files, allNodes)...)
+	allEdges = append(allEdges, ResolveCalls(project, root, files, allNodes, changed)...)
+	allEdges = append(allEdges, reusedEdges...)
 
 	if err := store.InsertNodes(allNodes); err != nil {
 		return Result{}, fmt.Errorf("insert nodes: %w", err)

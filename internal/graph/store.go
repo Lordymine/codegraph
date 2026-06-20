@@ -322,6 +322,43 @@ func (s *Store) FileHashes(project string) (map[string]string, error) {
 	return out, rows.Err()
 }
 
+// CallEdge is a stored CALLS edge plus its caller's file path — enough for
+// incremental indexing to decide, by scope, which edges to reuse across a re-index.
+type CallEdge struct {
+	SourceQN   string
+	TargetQN   string
+	SourceFile string
+	Props      map[string]any
+}
+
+// CallEdges returns every CALLS edge in the project with its caller's file path.
+// Read before a re-index so unchanged scopes' edges can be kept instead of
+// re-resolved (the expensive scip / go+VTA pass).
+func (s *Store) CallEdges(project string) ([]CallEdge, error) {
+	rows, err := s.db.Query(`SELECT src.qualified_name, tgt.qualified_name, src.file_path, e.properties
+		FROM edges e
+		JOIN nodes src ON src.id = e.source_id
+		JOIN nodes tgt ON tgt.id = e.target_id
+		WHERE e.project=? AND e.type='CALLS'`, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []CallEdge
+	for rows.Next() {
+		var ce CallEdge
+		var props string
+		if err := rows.Scan(&ce.SourceQN, &ce.TargetQN, &ce.SourceFile, &props); err != nil {
+			return nil, err
+		}
+		if props != "" {
+			_ = json.Unmarshal([]byte(props), &ce.Props)
+		}
+		out = append(out, ce)
+	}
+	return out, rows.Err()
+}
+
 // Stats returns node/edge counts for a project.
 func (s *Store) Stats(project string) (nodes, edges int, err error) {
 	_ = s.db.QueryRow(`SELECT COUNT(*) FROM nodes WHERE project=?`, project).Scan(&nodes)
