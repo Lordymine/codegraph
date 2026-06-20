@@ -137,6 +137,13 @@ func (s *Server) callTool(req rpcRequest) {
 		text = query.CompactRefs(refs)
 	case "snippet":
 		text, err = s.eng.Snippet(args.File, args.StartLine, args.EndLine)
+	case "detect_changes":
+		ch, derr := s.eng.DetectChanges()
+		if err = derr; err == nil {
+			if text = ch.Summary(); text == "" {
+				text = "no changes since the last index"
+			}
+		}
 	default:
 		s.fail(req.ID, -32602, "unknown tool: "+p.Name)
 		return
@@ -170,6 +177,8 @@ func toolSpecs() []map[string]any {
 			map[string]any{"qualified_name": str, "limit": num}, "qualified_name"),
 		spec("snippet", "Read the source lines for a node. Use only when you must see code.",
 			map[string]any{"file": str, "start_line": num, "end_line": num}, "file"),
+		spec("detect_changes", "List source files changed/added/deleted since the last index (TSV: status<TAB>path, empty = fresh). Check it before trusting the graph for a region; re-index if stale.",
+			map[string]any{}),
 	}
 }
 

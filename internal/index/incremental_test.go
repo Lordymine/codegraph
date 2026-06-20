@@ -166,6 +166,19 @@ func TestRun_ReusesUnchangedScopeCalls(t *testing.T) {
 	}
 }
 
+// TestChangesSummary pins the compact wire format the detect_changes tool returns:
+// one `status<TAB>path` line per file, in changed/added/deleted order; empty when clean.
+func TestChangesSummary(t *testing.T) {
+	got := Changes{Changed: []string{"a.ts"}, Added: []string{"c.ts"}, Deleted: []string{"b.ts"}}.Summary()
+	want := "changed\ta.ts\nadded\tc.ts\ndeleted\tb.ts\n"
+	if got != want {
+		t.Fatalf("summary mismatch:\n got %q\nwant %q", got, want)
+	}
+	if s := (Changes{}).Summary(); s != "" {
+		t.Errorf("clean changes should render empty, got %q", s)
+	}
+}
+
 func sameSet(a, b map[string]bool) bool {
 	if len(a) != len(b) {
 		return false

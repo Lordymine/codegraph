@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/Lordymine/codegraph/internal/graph"
+	"github.com/Lordymine/codegraph/internal/index"
 )
 
 // Ref is the compact reference returned for every symbol.
@@ -127,4 +128,11 @@ func (e *Engine) neighbors(qn, dir, edgeType string, limit int) ([]Ref, error) {
 // Snippet: the actual source for a node (only when the agent needs to read).
 func (e *Engine) Snippet(filePath string, start, end int) (string, error) {
 	return graph.Snippet(e.repoRoot, filePath, start, end)
+}
+
+// DetectChanges reports which source files changed since the last index — the
+// staleness check behind the detect_changes tool. The agent can tell whether the
+// graph is fresh for a region, and re-index if not (cheap now: scope-gated).
+func (e *Engine) DetectChanges() (index.Changes, error) {
+	return index.DetectChanges(e.store, e.project, e.repoRoot)
 }

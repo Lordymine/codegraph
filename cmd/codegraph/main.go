@@ -31,6 +31,8 @@ func main() {
 		err = cmdIndex(arg(2, "."))
 	case "stats":
 		err = cmdStats(arg(2, "."))
+	case "changes":
+		err = cmdChanges(arg(2, "."))
 	case "mcp":
 		err = cmdMCP(arg(2, "."))
 	case "bench":
@@ -64,6 +66,7 @@ func usage() {
 Usage:
   codegraph index <path>          Index a repo into the local graph store
   codegraph stats <path>          Show node/edge counts for a repo
+  codegraph changes <path>        List source files changed since the last index
   codegraph mcp   <path>          Serve the graph over MCP (stdio) for a repo
   codegraph bench <path>          Re-index + measure token/tool-call/speed efficiency
   codegraph quality gen <repo> [outdir] [lang]   Generate the answer-quality question set
@@ -117,6 +120,24 @@ func cmdIndex(root string) error {
 	}
 	fmt.Printf("indexed %s\n  files=%d nodes=%d edges=%d (dropped %d unresolved)\n",
 		res.Project, res.Files, res.Nodes, res.EdgesKept, res.EdgesDropped)
+	return nil
+}
+
+func cmdChanges(root string) error {
+	st, project, err := openFor(root)
+	if err != nil {
+		return err
+	}
+	defer st.Close()
+	ch, err := index.DetectChanges(st, project, root)
+	if err != nil {
+		return err
+	}
+	if !ch.Any() {
+		fmt.Println("no changes since last index")
+		return nil
+	}
+	fmt.Print(ch.Summary())
 	return nil
 }
 

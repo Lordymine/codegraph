@@ -19,6 +19,22 @@ func (c Changes) Any() bool {
 	return len(c.Changed)+len(c.Added)+len(c.Deleted) > 0
 }
 
+// Summary renders the change set as the compact wire format the detect_changes tool
+// returns: one `status<TAB>path` line per file (changed, then added, then deleted).
+func (c Changes) Summary() string {
+	var b strings.Builder
+	for _, p := range c.Changed {
+		b.WriteString("changed\t" + p + "\n")
+	}
+	for _, p := range c.Added {
+		b.WriteString("added\t" + p + "\n")
+	}
+	for _, p := range c.Deleted {
+		b.WriteString("deleted\t" + p + "\n")
+	}
+	return b.String()
+}
+
 // DetectChanges compares the source files currently under root against the per-file
 // content hashes recorded at the last index (Store.FileHashes). It is the basis for
 // skipping a re-index when nothing changed, and later for re-resolving only the
