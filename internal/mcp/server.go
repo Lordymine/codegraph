@@ -183,6 +183,9 @@ func toolSpecs() []map[string]any {
 	str := map[string]any{"type": "string"}
 	num := map[string]any{"type": "integer"}
 	spec := func(name, desc string, props map[string]any, required ...string) map[string]any {
+		if required == nil {
+			required = []string{} // JSON Schema `required` must be an array, never null
+		}
 		return map[string]any{
 			"name": name, "description": desc,
 			"inputSchema": map[string]any{"type": "object", "properties": props, "required": required},

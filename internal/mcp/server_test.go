@@ -11,6 +11,20 @@ import (
 	"github.com/Lordymine/codegraph/internal/query"
 )
 
+// TestToolSpecs_RequiredIsNeverNull is a regression test for a bug dogfooding
+// caught: tools with no required args (dead_code, detect_changes) emitted
+// `"required":null`, and MCP clients reject it ("expected array, received null"),
+// which fails the whole tools/list. JSON Schema's `required` must be an array.
+func TestToolSpecs_RequiredIsNeverNull(t *testing.T) {
+	b, err := json.Marshal(toolSpecs())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(b, []byte(`"required":null`)) {
+		t.Errorf("a tool spec emits required:null (MCP clients reject it); specs: %s", b)
+	}
+}
+
 // driveToolCall runs the server over a single `search` tool call and returns the
 // text content of its reply, with the given readiness gate installed (nil = none).
 func driveToolCall(t *testing.T, ready func() (bool, string)) string {
