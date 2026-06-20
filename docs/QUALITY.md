@@ -109,23 +109,29 @@ Measured intra-repo, graph mode, against the independent oracle truth:
 
 | repo | mean | callers | callees | definition | open |
 |---|--:|--:|--:|--:|--:|
-| **cobra** | 91% | 93% | 92% | 100% | 70% |
+| **cobra** | 94% | 100% | 92% | 100% | 70% |
 | **gh-cli** | 99% | 100% | 97% | – | – |
 
-cobra graph mean 91% sits just under the grep baseline's 93%, at ~4.5× fewer tokens
+cobra graph mean 94% sits just above the grep baseline's 93%, at ~4.5× fewer tokens
 (4042 vs 18320) and ~3× fewer tool calls (21 vs 60) — the same "as correct, far
-cheaper" shape as ajuda-aqui.
+cheaper" shape as ajuda-aqui, now also as correct.
 
-**What moved callers from 85% to 93% (cobra): crediting closure calls to the
-enclosing named function.** A call written inside a function literal — cobra's
-`Run: func(){...}`, flag visitors, locally-assigned closures — has an anonymous SSA
-source (`initCompleteCmd$1`) that is not a graph node, so every such call was dropped.
-`internal/gocalls` now walks `ssa.Function.Parent()` to the named function/method that
-lexically contains the closure and credits the call there (what an IDE "find callers"
-does). cobra recovered ~140 real edges; `callers(getCompletions)` went from empty to
-`initCompleteCmd`. Zero false positives introduced — it recovers calls that genuinely
-happen, just inside a literal. This is a pure recall win, so it raised callers without
-touching the interface-dispatch precision VTA already gives.
+**Two recall fixes took cobra callers from 85% to 100%, both pure recall (zero false
+positives — they recover calls that genuinely happen):**
+
+1. **Credit closure calls to the enclosing named function.** A call written inside a
+   function literal — cobra's `Run: func(){...}`, flag visitors, locally-assigned
+   closures — has an anonymous SSA source (`initCompleteCmd$1`) that is not a graph
+   node, so every such call was dropped. `internal/gocalls` now walks
+   `ssa.Function.Parent()` to the named function/method that lexically contains the
+   closure and credits the call there (what an IDE "find callers" does). cobra
+   recovered ~140 edges; `callers(getCompletions)` went from empty to `initCompleteCmd`.
+   Lifted callers 85→93.
+2. **Keep recursive self-edges.** Both resolvers dropped `caller == callee` edges, so a
+   function that calls itself (cobra's `FlagErrorFunc`, recursing on `c.parent`) lost a
+   real caller the oracle counts. Self-edges are kept now; `dead_code` excludes them
+   (`source_id <> id`) so a function reachable only by its own recursion still reads as
+   dead. Lifted callers 93→100 (callers-04 67→100).
 
 The same fix surfaced a real dead function via the `dead_code` query:
 `appendIfNotPresent`, which cobra's own source comments "is unused by cobra and should

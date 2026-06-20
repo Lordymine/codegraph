@@ -58,15 +58,16 @@ Indexa um repo → grafo SQLite de símbolos + relações; o agente consulta o g
   `callers(Store.InsertEdges)` → `pipeline.Run`; os 4 `getActiveCode` homônimos do
   ajuda-aqui desambiguados.
 
-**Qualidade (medida):** harness de answer-quality — TS/JS ~89%; Go **~91% mean / 93%
+**Qualidade (medida):** harness de answer-quality — TS/JS ~89%; Go **~94% mean / 100%
 callers / 92% callees** (cobra) e **99% mean / 100% callers / 97% callees** (gh-cli),
 medido **intra-repo** (callees de stdlib/lib fora do oráculo, porque o grafo os dropa
 por design — igual ao upstream, que grada isso como PARTIAL). Go chegou lá com **VTA**
 (`internal/gocalls`, substituiu o CHA impreciso) + carregar arquivos de teste
-(`packages Tests:true`) + **atribuir chamadas dentro de closures à função nomeada que
-as contém** (o padrão `Run: func(){...}` do cobra antes perdia a aresta CALLS — o fix
-subiu callers no cobra de 85→93% sob condições idênticas, zero falso positivo). Ver
-`docs/QUALITY.md`.
+(`packages Tests:true`) + dois consertos de recall que levaram callers no cobra de
+85→100% (zero falso positivo): **atribuir chamadas dentro de closures à função nomeada
+que as contém** (o `Run: func(){...}` do cobra antes perdia a aresta) e **manter
+self-edges de recursão** (função que se chama é caller dela mesma — o `dead_code`
+ignora self-edge pra não dar função recursiva como viva). Ver `docs/QUALITY.md`.
 
 ## Build & uso
 
