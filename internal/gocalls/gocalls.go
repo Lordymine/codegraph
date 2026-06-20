@@ -57,7 +57,11 @@ func CallEdges(project, root string, known func(qn string) bool) (edges []graph.
 
 	seen := make(map[string]bool)
 	for fn, node := range cg.Nodes {
-		callerQN, ok := funcToQN(fn, project, root)
+		// Credit a call to the named function that lexically contains it: a call
+		// written inside a function literal (cobra's Run: func(){...}) lives in an
+		// anonymous closure that is not a graph node, so without this its edges are
+		// dropped — the dominant "who calls X" recall hole. Matches IDE find-callers.
+		callerQN, ok := funcToQN(enclosingNamed(fn), project, root)
 		if !ok || !known(callerQN) {
 			continue
 		}
@@ -81,10 +85,22 @@ func CallEdges(project, root string, known func(qn string) bool) (edges []graph.
 	return edges, nil
 }
 
+// enclosingNamed walks up from an anonymous function (closure) to the named
+// function or method that lexically contains it; ssa.Function.Parent() is non-nil
+// only for anonymous functions, so a package-level function or method is returned
+// unchanged. Calls written inside a closure are thus credited to that named parent.
+func enclosingNamed(fn *ssa.Function) *ssa.Function {
+	for fn != nil && fn.Parent() != nil {
+		fn = fn.Parent()
+	}
+	return fn
+}
+
 // funcToQN maps an SSA function to a codegraph qualified name, matching the M1
 // Go scheme: "<project>:<relpath>.<RecvType>.<name>" for methods,
 // "<project>:<relpath>.<name>" for functions. Returns false for synthetic
-// functions, closures, and anything outside the repo (stdlib/deps).
+// functions and anything outside the repo (stdlib/deps). Callers pass the result
+// of enclosingNamed, so closures arrive already mapped to their named parent.
 func funcToQN(fn *ssa.Function, project, root string) (string, bool) {
 	if fn == nil || fn.Pkg == nil || fn.Synthetic != "" {
 		return "", false

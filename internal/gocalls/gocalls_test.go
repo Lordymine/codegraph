@@ -67,6 +67,25 @@ func TestCallEdges_GenericsDoNotCrash(t *testing.T) {
 	}
 }
 
+// TestCallEdges_AttributesClosureCallsToEnclosing pins closure call attribution:
+// a call written inside a function literal must be credited to the enclosing named
+// function. Without it, the edge's source is the anonymous "outer$1", which is not
+// a graph node, so the call is dropped — the dominant recall hole on closure-heavy
+// code like cobra (Run: func(){...}).
+func TestCallEdges_AttributesClosureCallsToEnclosing(t *testing.T) {
+	root, err := filepath.Abs("testdata/closures")
+	if err != nil {
+		t.Fatal(err)
+	}
+	edges, err := CallEdges("test", root, func(string) bool { return true })
+	if err != nil {
+		t.Fatalf("CallEdges: %v", err)
+	}
+	if !hasEdge(edges, "closures.go.outer", "closures.go.target") {
+		t.Errorf("call inside a closure must be attributed to the enclosing function (outer->target); edges:%s", dumpEdges(edges))
+	}
+}
+
 func hasEdge(edges []graph.Edge, srcTail, dstTail string) bool {
 	for _, e := range edges {
 		if strings.HasSuffix(e.SourceQN, srcTail) && strings.HasSuffix(e.TargetQN, dstTail) {
