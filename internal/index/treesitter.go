@@ -56,7 +56,7 @@ func walkGoDefs(root *tree_sitter.Node, src []byte, add addFn) {
 			}
 			nm := name.Utf8Text(src)
 			add(graph.LabelFunction, nm, nm, n.StartPosition().Row, n.EndPosition().Row,
-				map[string]any{"is_exported": goExported(nm)})
+				map[string]any{"is_exported": goExported(nm), "complexity": goCyclomatic(n)})
 
 		case "method_declaration":
 			name := n.ChildByFieldName("name")
@@ -70,7 +70,7 @@ func walkGoDefs(root *tree_sitter.Node, src []byte, add addFn) {
 				qn = recv + "." + nm // Store.Close vs Other.Close — distinct QNs
 			}
 			add(graph.LabelMethod, nm, qn, n.StartPosition().Row, n.EndPosition().Row,
-				map[string]any{"is_exported": goExported(nm), "receiver": recv})
+				map[string]any{"is_exported": goExported(nm), "receiver": recv, "complexity": goCyclomatic(n)})
 
 		case "type_declaration":
 			for j := uint(0); j < n.NamedChildCount(); j++ {
@@ -114,7 +114,9 @@ func walkTSDefs(root *tree_sitter.Node, src []byte, add addFn) {
 
 		switch decl.Kind() {
 		case "function_declaration", "generator_function_declaration":
-			emitNamed(decl, src, graph.LabelFunction, tsExtra(exported, nil), add)
+			extra := tsExtra(exported, nil)
+			extra["complexity"] = tsCyclomatic(decl)
+			emitNamed(decl, src, graph.LabelFunction, extra, add)
 
 		case "interface_declaration":
 			emitNamed(decl, src, graph.LabelInterface, tsExtra(exported, nil), add)
@@ -165,12 +167,14 @@ func walkTSVariableDecls(decl *tree_sitter.Node, src []byte, exported bool, add 
 		}
 		nm := name.Utf8Text(src)
 		label := graph.LabelVariable
+		extra := tsExtra(exported, nil)
 		if val := vd.ChildByFieldName("value"); val != nil {
 			if k := val.Kind(); k == "arrow_function" || k == "function_expression" {
 				label = graph.LabelFunction
+				extra["complexity"] = tsCyclomatic(val)
 			}
 		}
-		add(label, nm, nm, decl.StartPosition().Row, decl.EndPosition().Row, tsExtra(exported, nil))
+		add(label, nm, nm, decl.StartPosition().Row, decl.EndPosition().Row, extra)
 	}
 }
 
@@ -192,9 +196,9 @@ func walkTSClassMethods(class *tree_sitter.Node, className string, src []byte, a
 		case "method_definition", "abstract_method_signature":
 			if name := m.ChildByFieldName("name"); name != nil {
 				mn := name.Utf8Text(src)
-				var extra map[string]any
+				extra := map[string]any{"complexity": tsCyclomatic(m)}
 				if len(pending) > 0 {
-					extra = map[string]any{"decorators": pending}
+					extra["decorators"] = pending
 				}
 				add(graph.LabelMethod, mn, className+"."+mn, m.StartPosition().Row, m.EndPosition().Row, extra)
 			}
