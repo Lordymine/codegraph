@@ -36,9 +36,10 @@ type rpcError struct {
 
 // Server serves MCP over the given streams using a query engine.
 type Server struct {
-	eng *query.Engine
-	in  *bufio.Scanner
-	out *json.Encoder
+	eng   *query.Engine
+	in    *bufio.Scanner
+	out   *json.Encoder
+	ready func() (bool, string) // nil = always ready; see SetReadiness
 }
 
 func NewServer(eng *query.Engine, in io.Reader, out io.Writer) *Server {
@@ -46,6 +47,13 @@ func NewServer(eng *query.Engine, in io.Reader, out io.Writer) *Server {
 	sc.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
 	return &Server{eng: eng, in: sc, out: json.NewEncoder(out)}
 }
+
+// SetReadiness installs a gate consulted before every tool call. While it reports
+// not-ready, tool calls return its status message instead of querying — so a repo
+// whose background index is still building (or rebuilding) reports "indexing"
+// rather than answering from a half-built store. initialize/tools/list are never
+// gated, so the agent still sees the server and its tools immediately.
+func (s *Server) SetReadiness(fn func() (bool, string)) { s.ready = fn }
 
 // Serve runs the request loop until stdin closes.
 func (s *Server) Serve() error {
@@ -97,6 +105,12 @@ type toolCallParams struct {
 }
 
 func (s *Server) callTool(req rpcRequest) {
+	if s.ready != nil {
+		if ok, msg := s.ready(); !ok {
+			s.reply(req.ID, map[string]any{"content": []map[string]any{{"type": "text", "text": msg}}})
+			return
+		}
+	}
 	var p toolCallParams
 	_ = json.Unmarshal(req.Params, &p)
 	var args struct {

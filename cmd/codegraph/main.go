@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"github.com/Lordymine/codegraph/internal/bench"
@@ -156,14 +157,55 @@ func cmdStats(root string) error {
 }
 
 func cmdMCP(root string) error {
-	root, _ = filepath.Abs(root)
+	root, _ = filepath.Abs(resolveRepo(root))
 	st, project, err := openFor(root)
 	if err != nil {
 		return err
 	}
 	defer st.Close()
 	eng := query.NewEngine(st, project, root)
-	return mcp.NewServer(eng, os.Stdin, os.Stdout).Serve()
+	srv := mcp.NewServer(eng, os.Stdin, os.Stdout)
+
+	// Auto-index in the background so a repo "just works" the moment it's registered:
+	// the MCP handshake answers immediately while the graph builds, and tools report
+	// "indexing" (via the readiness gate) until it's ready — never a half-built store.
+	// M3 makes this a ~no-op on an unchanged repo, so it runs on every launch and the
+	// agent always queries a fresh graph, with no manual `codegraph index` step.
+	var mu sync.Mutex
+	ready := false
+	status := "codegraph is building the index for " + project + " (first run can take a while); retry shortly"
+	srv.SetReadiness(func() (bool, string) {
+		mu.Lock()
+		defer mu.Unlock()
+		return ready, status
+	})
+	go func() {
+		_, ierr := index.Run(st, root)
+		mu.Lock()
+		defer mu.Unlock()
+		if ierr != nil {
+			// Stay not-ready: surface the failure on every tool call rather than
+			// answering from a possibly half-written store.
+			status = "codegraph: indexing " + project + " failed: " + ierr.Error()
+			return
+		}
+		ready = true
+	}()
+
+	return srv.Serve()
+}
+
+// resolveRepo picks the repo to serve: an explicit path arg wins; otherwise
+// CLAUDE_PROJECT_DIR (which Claude Code sets to the project root) when present; else
+// the default. So both `codegraph mcp <path>` and a bare `codegraph mcp` work.
+func resolveRepo(arg string) string {
+	if arg != "" && arg != "." {
+		return arg
+	}
+	if env := os.Getenv("CLAUDE_PROJECT_DIR"); env != "" {
+		return env
+	}
+	return arg
 }
 
 // cmdBench reproduces the upstream's measurable headline (token + tool-call
