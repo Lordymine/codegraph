@@ -50,19 +50,23 @@ Indexa um repo → grafo SQLite de símbolos + relações; o agente consulta o g
 - **M3** — indexação incremental (`internal/index/incremental.go`): sha256 por arquivo,
   `DetectChanges`, **no-op quando intacto** (cobra 1.77s→0.06s) e **CALLS gated por
   escopo** (re-roda scip/Go só dos escopos com arquivo mudado, reusa o resto).
-- Query engine (`internal/query`): search / callers / callees / neighbors / snippet /
-  detect_changes.
+- Query engine (`internal/query`): search / callers / callees / neighbors / similar /
+  dead_code / snippet / detect_changes.
 - MCP stdio JSON-RPC (`internal/mcp`); CLI (`cmd/codegraph`): `index | stats | changes |
   mcp | bench | quality | cli`.
 - **Prova M2:** `callees(ResolveCalls)` → as 6 funções que ela chama;
   `callers(Store.InsertEdges)` → `pipeline.Run`; os 4 `getActiveCode` homônimos do
   ajuda-aqui desambiguados.
 
-**Qualidade (medida):** harness de answer-quality — TS/JS ~89%; Go ~88% mean / 85%
-callers / 92% callees, medido **intra-repo** (callees de stdlib/lib fora do oráculo,
-porque o grafo os dropa por design — igual ao upstream, que grada isso como PARTIAL).
-Go chegou lá com **VTA** (`internal/gocalls`, substituiu o CHA impreciso) + carregar
-arquivos de teste (`packages Tests:true`). Ver `docs/QUALITY.md`.
+**Qualidade (medida):** harness de answer-quality — TS/JS ~89%; Go **~91% mean / 93%
+callers / 92% callees** (cobra) e **99% mean / 100% callers / 97% callees** (gh-cli),
+medido **intra-repo** (callees de stdlib/lib fora do oráculo, porque o grafo os dropa
+por design — igual ao upstream, que grada isso como PARTIAL). Go chegou lá com **VTA**
+(`internal/gocalls`, substituiu o CHA impreciso) + carregar arquivos de teste
+(`packages Tests:true`) + **atribuir chamadas dentro de closures à função nomeada que
+as contém** (o padrão `Run: func(){...}` do cobra antes perdia a aresta CALLS — o fix
+subiu callers no cobra de 85→93% sob condições idênticas, zero falso positivo). Ver
+`docs/QUALITY.md`.
 
 ## Build & uso
 

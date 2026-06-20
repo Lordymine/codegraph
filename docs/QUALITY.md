@@ -103,6 +103,42 @@ graph = 1 call, the grep agent opened 20+ files). Two genuine quality difference
   not intent — explaining *what a symbol is for* is where reading the code wins.
   This is the upstream's "graph trades quality for tokens", reproduced.
 
+## Results — Go (cobra, gh-cli), and the closure-attribution fix
+
+Measured intra-repo, graph mode, against the independent oracle truth:
+
+| repo | mean | callers | callees | definition | open |
+|---|--:|--:|--:|--:|--:|
+| **cobra** | 91% | 93% | 92% | 100% | 70% |
+| **gh-cli** | 99% | 100% | 97% | – | – |
+
+cobra graph mean 91% sits just under the grep baseline's 93%, at ~4.5× fewer tokens
+(4042 vs 18320) and ~3× fewer tool calls (21 vs 60) — the same "as correct, far
+cheaper" shape as ajuda-aqui.
+
+**What moved callers from 85% to 93% (cobra): crediting closure calls to the
+enclosing named function.** A call written inside a function literal — cobra's
+`Run: func(){...}`, flag visitors, locally-assigned closures — has an anonymous SSA
+source (`initCompleteCmd$1`) that is not a graph node, so every such call was dropped.
+`internal/gocalls` now walks `ssa.Function.Parent()` to the named function/method that
+lexically contains the closure and credits the call there (what an IDE "find callers"
+does). cobra recovered ~140 real edges; `callers(getCompletions)` went from empty to
+`initCompleteCmd`. Zero false positives introduced — it recovers calls that genuinely
+happen, just inside a literal. This is a pure recall win, so it raised callers without
+touching the interface-dispatch precision VTA already gives.
+
+The same fix surfaced a real dead function via the `dead_code` query:
+`appendIfNotPresent`, which cobra's own source comments "is unused by cobra and should
+be removed in a version 2" — the lone result after closure recall removed the
+false-positive noise.
+
+**On the 50-result cap.** The `callers`/`callees` default limit is 50. On a hub like
+gh-cli's `iostreams.Test` (448 real callers) that crushes the *answer's* recall
+regardless of resolver quality — a CLI default, not a graph limit. The numbers above
+are measured uncapped (limit 1000) so the score reflects the graph, not the cap; the
+controlled before/after for the closure fix (85→93) holds the cap fixed on both sides.
+Raising the default is a tracked product change.
+
 ## A scorer bug we caught (and why the split harness matters)
 
 The first scoring run reported baseline callers at **32%** — four questions at 0%.
