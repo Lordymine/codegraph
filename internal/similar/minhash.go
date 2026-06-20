@@ -58,18 +58,19 @@ func shingleHashes(tokens []string, k int) []uint64 {
 }
 
 // Signature is the MinHash signature of the token stream: numHashes positions, each
-// the minimum of a distinct universal-hash permutation (a*h+b) over the shingle-hash
-// set. The fraction of equal positions between two signatures estimates the Jaccard
-// similarity of their shingle sets (see EstJaccard).
+// the minimum over the shingle-hash set of a distinct strong-mix permutation
+// (splitmix64 of the shingle XOR a per-position seed). The fraction of equal positions
+// between two signatures estimates the Jaccard similarity of their shingle sets (see
+// EstJaccard). A strong avalanche permutation matters: the cheap a*h+b universal hash
+// is only 2-universal and its MinHash estimate is too noisy at a tight threshold.
 func Signature(tokens []string, k, numHashes int) []uint64 {
 	sh := shingleHashes(tokens, k)
 	sig := make([]uint64, numHashes)
 	for i := range sig {
-		a := splitmix64(uint64(2*i+1)) | 1 // odd multiplier for a full-period permutation
-		b := splitmix64(uint64(2*i + 2))
+		seed := uint64(i) * 0x9e3779b97f4a7c15 // distinct per position
 		min := uint64(math.MaxUint64)
 		for _, h := range sh {
-			if v := a*h + b; v < min {
+			if v := splitmix64(h ^ seed); v < min {
 				min = v
 			}
 		}
