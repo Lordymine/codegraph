@@ -16,6 +16,7 @@ import (
 	"github.com/Lordymine/codegraph/internal/bench"
 	"github.com/Lordymine/codegraph/internal/graph"
 	"github.com/Lordymine/codegraph/internal/index"
+	"github.com/Lordymine/codegraph/internal/install"
 	"github.com/Lordymine/codegraph/internal/mcp"
 	"github.com/Lordymine/codegraph/internal/quality"
 	"github.com/Lordymine/codegraph/internal/query"
@@ -34,6 +35,8 @@ func main() {
 		err = cmdStats(arg(2, "."))
 	case "changes":
 		err = cmdChanges(arg(2, "."))
+	case "install":
+		err = cmdInstall()
 	case "mcp":
 		err = cmdMCP(arg(2, "."))
 	case "bench":
@@ -68,6 +71,7 @@ Usage:
   codegraph index <path>          Index a repo into the local graph store
   codegraph stats <path>          Show node/edge counts for a repo
   codegraph changes <path>        List source files changed since the last index
+  codegraph install               Register codegraph as an MCP server in detected agents
   codegraph mcp   <path>          Serve the graph over MCP (stdio) for a repo
   codegraph bench <path>          Re-index + measure token/tool-call/speed efficiency
   codegraph quality gen <repo> [outdir] [lang]   Generate the answer-quality question set
@@ -153,6 +157,32 @@ func cmdStats(root string) error {
 		return err
 	}
 	fmt.Printf("project=%s nodes=%d edges=%d\n", project, n, e)
+	return nil
+}
+
+// cmdInstall registers this binary as an MCP server in every detected agent
+// (Claude Code, Codex, opencode), and prints manual instructions for the rest.
+func cmdInstall() error {
+	bin, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	outs := install.Run(install.Agents(), bin)
+	if len(outs) == 0 {
+		fmt.Println("No supported agent detected on PATH (looked for: claude, codex, opencode).")
+	}
+	for _, o := range outs {
+		if o.Installed {
+			fmt.Printf("✓ %s — registered codegraph\n", o.Agent)
+			continue
+		}
+		if o.Err != nil {
+			fmt.Printf("! %s — auto-register failed (%v); do it manually:\n%s\n", o.Agent, o.Err, o.Manual)
+			continue
+		}
+		fmt.Printf("• %s — needs a manual step:\n%s\n", o.Agent, o.Manual)
+	}
+	fmt.Println("\n" + install.GenericManual(bin))
 	return nil
 }
 
