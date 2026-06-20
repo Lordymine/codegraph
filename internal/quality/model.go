@@ -64,10 +64,10 @@ type Score struct {
 
 // Agg aggregates per-mode quality and cost.
 type Agg struct {
-	Mode        string             `json:"mode"`
-	N           int                `json:"n"`
-	MeanQuality float64            `json:"mean_quality"`
-	ByType      map[QType]float64  `json:"by_type"`
-	TotalTokens int                `json:"total_tokens"`
-	TotalCalls  int                `json:"total_calls"`
+	Mode        string            `json:"mode"`
+	N           int               `json:"n"`
+	MeanQuality float64           `json:"mean_quality"`
+	ByType      map[QType]float64 `json:"by_type"`
+	TotalTokens int               `json:"total_tokens"`
+	TotalCalls  int               `json:"total_calls"`
 }

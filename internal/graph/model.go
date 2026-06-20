@@ -28,40 +28,40 @@ const (
 type EdgeType string
 
 const (
-	EdgeDefines       EdgeType = "DEFINES"        // container -> member (file defines func, class defines method)
-	EdgeContainsFile  EdgeType = "CONTAINS_FILE"  // folder/module -> file
-	EdgeCalls         EdgeType = "CALLS"          // caller -> callee (needs real resolution / LSP)
-	EdgeImports       EdgeType = "IMPORTS"        // module -> imported module
-	EdgeInherits      EdgeType = "INHERITS"       // class -> base class
-	EdgeImplements    EdgeType = "IMPLEMENTS"     // class -> interface
-	EdgeDecorates     EdgeType = "DECORATES"      // decorator -> target (Nest @Injectable etc.)
-	EdgeHTTPCalls     EdgeType = "HTTP_CALLS"     // call-site -> route (cross-service)
-	EdgeSimilarTo     EdgeType = "SIMILAR_TO"     // near-clone (MinHash + LSH)
+	EdgeDefines       EdgeType = "DEFINES"       // container -> member (file defines func, class defines method)
+	EdgeContainsFile  EdgeType = "CONTAINS_FILE" // folder/module -> file
+	EdgeCalls         EdgeType = "CALLS"         // caller -> callee (needs real resolution / LSP)
+	EdgeImports       EdgeType = "IMPORTS"       // module -> imported module
+	EdgeInherits      EdgeType = "INHERITS"      // class -> base class
+	EdgeImplements    EdgeType = "IMPLEMENTS"    // class -> interface
+	EdgeDecorates     EdgeType = "DECORATES"     // decorator -> target (Nest @Injectable etc.)
+	EdgeHTTPCalls     EdgeType = "HTTP_CALLS"    // call-site -> route (cross-service)
+	EdgeSimilarTo     EdgeType = "SIMILAR_TO"    // near-clone (MinHash + LSH)
 	EdgeSemanticalRel EdgeType = "SEMANTICALLY_RELATED"
 )
 
 // Node is a symbol or container in the codebase. qualified_name is the unique
 // key within a project (e.g. "proj.apps.api.src.foo.Bar.baz").
 type Node struct {
-	ID            int64                  // assigned by the store on insert
-	Project       string                 // project name (one store can hold many)
-	Label         NodeLabel              //
-	Name          string                 // short name, e.g. "getActiveCode"
-	QualifiedName string                 // unique within project
-	FilePath      string                 // repo-relative path
-	StartLine     int                    //
-	EndLine       int                    //
-	Props         map[string]any         // signature, params, complexity, is_test, ...
+	ID            int64          // assigned by the store on insert
+	Project       string         // project name (one store can hold many)
+	Label         NodeLabel      //
+	Name          string         // short name, e.g. "getActiveCode"
+	QualifiedName string         // unique within project
+	FilePath      string         // repo-relative path
+	StartLine     int            //
+	EndLine       int            //
+	Props         map[string]any // signature, params, complexity, is_test, ...
 }
 
 // Edge is a directed relationship between two nodes (by qualified name at build
 // time; resolved to node IDs by the store on flush).
 type Edge struct {
-	Project    string
-	SourceQN   string // qualified_name of the source node
-	TargetQN   string // qualified_name of the target node
-	Type       EdgeType
-	Props      map[string]any
+	Project  string
+	SourceQN string // qualified_name of the source node
+	TargetQN string // qualified_name of the target node
+	Type     EdgeType
+	Props    map[string]any
 }
 
 // SearchHit is a ranked result from the FTS index.

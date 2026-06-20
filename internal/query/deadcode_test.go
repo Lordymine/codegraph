@@ -31,11 +31,11 @@ func TestEngine_DeadCode_FlagsUnusedPrivateOnly(t *testing.T) {
 	}
 	priv := map[string]any{"is_exported": false}
 	if err := store.InsertNodes([]graph.Node{
-		node("helper", "a.go", graph.LabelFunction, priv),                                       // dead: private, uncalled
-		node("used", "a.go", graph.LabelFunction, priv),                                         // has an inbound CALLS
-		node("Exported", "a.go", graph.LabelFunction, map[string]any{"is_exported": true}),      // public API
-		node("main", "a.go", graph.LabelFunction, priv),                                         // entry point
-		node("TestThing", "a_test.go", graph.LabelFunction, priv),                               // test runner entry
+		node("helper", "a.go", graph.LabelFunction, priv),                                            // dead: private, uncalled
+		node("used", "a.go", graph.LabelFunction, priv),                                              // has an inbound CALLS
+		node("Exported", "a.go", graph.LabelFunction, map[string]any{"is_exported": true}),           // public API
+		node("main", "a.go", graph.LabelFunction, priv),                                              // entry point
+		node("TestThing", "a_test.go", graph.LabelFunction, priv),                                    // test runner entry
 		node("handler", "ctrl.ts", graph.LabelMethod, map[string]any{"decorators": []string{"Get"}}), // framework-invoked
 	}); err != nil {
 		t.Fatal(err)

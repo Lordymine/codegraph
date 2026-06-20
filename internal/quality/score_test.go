@@ -40,8 +40,8 @@ func TestNormNameStripsLocationAnnotations(t *testing.T) {
 		"ForgotPasswordScreen (apps/mobile/app/(auth)/forgot-password.tsx:29)": "forgotpasswordscreen",
 		"RegisterPage @ apps/admin/src/app/(auth)/register/page.tsx:23":        "registerpage",
 		"apps/admin/src/components/ui/button.tsx:Button":                       "button",
-		"CatalogPage":                                                          "catalogpage",
-		"MoneyField (extra-section.tsx:152)":                                   "moneyfield",
+		"CatalogPage":                        "catalogpage",
+		"MoneyField (extra-section.tsx:152)": "moneyfield",
 	}
 	for in, want := range cases {
 		if got := normName(in); got != want {

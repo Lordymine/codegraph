@@ -103,7 +103,7 @@ func decoratorArg(d *tree_sitter.Node, src []byte) string {
 }
 
 // stringFragment returns the content of a tree-sitter `string` node (without quotes);
-// an empty literal ('') has no fragment child, so it returns "".
+// an empty literal (”) has no fragment child, so it returns "".
 func stringFragment(n *tree_sitter.Node, src []byte) string {
 	for i := uint(0); i < n.NamedChildCount(); i++ {
 		if c := n.NamedChild(i); c.Kind() == "string_fragment" {
