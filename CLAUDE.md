@@ -36,7 +36,7 @@ Indexa um repo → grafo SQLite de símbolos + relações; o agente consulta o g
    `CGO_ENABLED=1` + gcc. scip-typescript entra como ferramenta de build (Node), não
    liga no binário.
 
-## Estado atual — M0 + M1 + M2 + M3 fechados
+## Estado atual — M0 + M1 + M2 + M3 + M4 fechados
 
 - Store SQLite 2 tabelas + FTS5 espelhando o upstream (`internal/graph`).
 - Discover (hard-ignores + `.cbmignore`) + detecção de linguagem (Go/TS/JS).
@@ -50,6 +50,10 @@ Indexa um repo → grafo SQLite de símbolos + relações; o agente consulta o g
 - **M3** — indexação incremental (`internal/index/incremental.go`): sha256 por arquivo,
   `DetectChanges`, **no-op quando intacto** (cobra 1.77s→0.06s) e **CALLS gated por
   escopo** (re-roda scip/Go só dos escopos com arquivo mudado, reusa o resto).
+- **M4** — `SIMILAR_TO` (MinHash+LSH, `internal/similar`) + tool `similar`; `dead_code`
+  (zero CALLS de entrada, fora de entry points); complexidade ciclomática em
+  `properties.complexity` (`internal/index/complexity.go`). De brinde, consertos de
+  recall do call-graph (closures + self-edges) que levaram callers Go a 100%.
 - Query engine (`internal/query`): search / callers / callees / neighbors / similar /
   dead_code / snippet / detect_changes.
 - MCP stdio JSON-RPC (`internal/mcp`); CLI (`cmd/codegraph`): `index | stats | changes |
@@ -88,9 +92,12 @@ Store: `~/.cache/codegraph/<project>.db`. Original clonado (shallow) em
 - **M1** ✅ tree-sitter + superfície TS completa + IMPORTS.
 - **M2** ✅ CALLS edges via indexadores batch (scip-typescript + go/packages CHA).
 - **M3** ✅ incremental: hash por arquivo + no-op + CALLS gated por escopo + `detect_changes`.
-- **M4 (próximo)** SIMILAR_TO (MinHash/LSH) · **M5** get_architecture + registrar no Claude Code.
-- **Qualidade Go ≥85%** ✅ — VTA (substituiu CHA) + carregar arquivos de teste,
-  medição intra-repo. Track de paper/eval na memória.
+- **M4** ✅ SIMILAR_TO (MinHash/LSH) + `similar`/`dead_code` + complexidade ciclomática.
+- **M5 (próximo)** get_architecture (hotspots lê `properties.complexity`) + HTTP route
+  nodes + `HTTP_CALLS` + registrar no Claude Code (`claude mcp add`).
+- **Qualidade Go ≥85%** ✅ — VTA (substituiu CHA) + arquivos de teste + recall de
+  closures/self-edges (callers cobra 100%, gh-cli 100%), medição intra-repo. Track de
+  paper/eval na memória.
 
 ## Convenções
 

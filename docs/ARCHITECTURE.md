@@ -55,6 +55,7 @@ Discover(root)            file walk; hard-ignores + .cbmignore; language detect
   → ResolveImports        IMPORTS edges (TS/JS, relative File→File)
   → ResolveCalls          CALLS edges  scip-typescript (TS/JS) + go/packages VTA (Go);
                           only changed scopes re-resolve, the rest are reused (M3)
+  → ResolveSimilar        SIMILAR_TO edges  MinHash+LSH over function token shingles (M4)
   → Store.InsertNodes/Edges
 ```
 
@@ -69,17 +70,27 @@ call graph for Go (`internal/gocalls`) — dropping callees that aren't known gr
 Incremental (M3, incremental.go): `DetectChanges` gates a no-op when nothing changed, and
 a re-index re-resolves only the changed scopes, reusing the stored CALLS edges of the rest.
 
+M4 enrichment: `ResolveSimilar` (similar.go) emits `SIMILAR_TO` near-clone edges from a
+MinHash signature + LSH banding over each function's token shingles (`internal/similar`,
+no embeddings). The definitions pass also stamps McCabe cyclomatic complexity onto each
+Function/Method (`complexity.go`, one tree-sitter subtree walk) into `properties.complexity`.
+The Go/TS call resolvers credit calls inside closures to the enclosing named function and
+keep recursive self-edges — recall fixes that took intra-repo callers to ~100% (see
+`docs/QUALITY.md`).
+
 ## Query layer (internal/query)
 
 `Engine` exposes the agent-facing operations, each returning `[]Ref` (compact):
-`Search`, `Callers`, `Callees`, `Neighbors`, `Snippet`, `DetectChanges`. This is the
-contract both the CLI and the MCP server use, so behavior is identical across entry points.
+`Search`, `Callers`, `Callees`, `Neighbors`, `Similar`, `DeadCode`, `Snippet`,
+`DetectChanges`. This is the contract both the CLI and the MCP server use, so behavior is
+identical across entry points. Relationship queries default to limit 500 (a hub can have
+hundreds of callers — a low cap would silently truncate the answer).
 
 ## MCP server (internal/mcp)
 
 Minimal stdio JSON-RPC 2.0 (newline-delimited — the MCP convention), stdlib only.
 Handles `initialize`, `tools/list`, `tools/call`. Tools: `search`, `callers`,
-`callees`, `neighbors`, `snippet`, `detect_changes`. Swap for
+`callees`, `neighbors`, `similar`, `dead_code`, `snippet`, `detect_changes`. Swap for
 `github.com/mark3labs/mcp-go` if it grows.
 
 ## CLI (cmd/codegraph)
@@ -100,9 +111,10 @@ absolute repo path (matches upstream convention).
 ```
 cmd/codegraph/        CLI entrypoint + subcommands (index/stats/mcp/bench/quality/cli)
 internal/graph/       model.go (Node/Edge/labels/edge-types) + store.go (SQLite)
-internal/index/       discover.go, definitions.go + treesitter.go, imports.go, calls.go, incremental.go, pipeline.go
+internal/index/       discover.go, definitions.go + treesitter.go + complexity.go, imports.go, calls.go, similar.go, incremental.go, pipeline.go
 internal/scip/        scip-typescript runner + SCIP→CALLS attribution (TS/JS, M2)
 internal/gocalls/     go/packages + VTA call graph → CALLS (Go, M2; cha.go = generics-safe)
+internal/similar/     MinHash signature + LSH banding → SIMILAR_TO near-clone edges (M4)
 internal/query/       query.go (Engine → compact Refs)
 internal/mcp/         server.go (stdio JSON-RPC)
 internal/bench/       token/tool-call/speed benchmark harness

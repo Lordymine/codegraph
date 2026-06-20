@@ -92,12 +92,27 @@ go+VTA) no longer re-runs when it doesn't have to.
 Honest limit: true *per-file* CALLS incrementality is impossible (the resolvers are
 whole-scope), so the granularity is the scope, not the file — the realistic win.
 
-## M4 — Similarity + light enrichment
+## M4 — Similarity + light enrichment ✅ (done)
 
-- `SIMILAR_TO` via MinHash + LSH over token shingles (near-clone detection) — easy
-  and high-signal; no embeddings/model needed.
-- Complexity metrics in `properties` (cyclomatic/cognitive, loop depth).
-- Dead-code hint: functions with zero inbound `CALLS` (excluding entry points).
+- **`SIMILAR_TO`** via MinHash + LSH over token shingles (`internal/similar`) — near-clone
+  detection, no embeddings/model. Wired into the pipeline (threshold 0.7) and surfaced
+  by the **`similar`** query/tool. cobra found +231 real near-clones (the cross-shell
+  `Gen*CompletionFile` cluster).
+- **Cyclomatic complexity** (McCabe) in `properties.complexity` on every Function/Method,
+  from the tree-sitter subtree (`internal/index/complexity.go`). Cognitive/loop-depth
+  deferred (YAGNI); the hotspots query that reads this is M5. 
+- **Dead-code hint** — `dead_code` query: Function/Method with zero inbound `CALLS`,
+  minus entry points (exported, decorated, main/init, tests). A candidate list (recall-
+  bounded), not a delete list; on cobra it pinpoints `appendIfNotPresent`, which cobra's
+  own source marks unused-and-removable.
+
+**Bonus — the dead-code hint exposed a call-graph recall hole, and fixing it lifted Go
+quality.** Calls written inside closures (cobra's `Run: func(){...}`) and recursive
+self-calls were dropped, so they showed as false dead code. Crediting closure calls to
+the enclosing named function (`ssa.Function.Parent()`) + keeping recursive self-edges
+(while `dead_code` ignores them) took cobra callers **85→100%** (mean 88→94%), zero
+false positives. Also raised the relationship-query default limit 50→500 so hub answers
+aren't silently truncated. See `docs/QUALITY.md`.
 
 ## M5 — MCP polish + distribution
 
