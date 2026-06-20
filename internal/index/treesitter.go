@@ -99,13 +99,13 @@ func walkTSDefs(root *tree_sitter.Node, src []byte, add addFn) {
 	for i := uint(0); i < root.NamedChildCount(); i++ {
 		n := root.NamedChild(i)
 		exported := false
-		var decorators []string
+		var classDecorators []decor
 		decl := n
 
 		if n.Kind() == "export_statement" {
 			exported = true
 			if d := n.ChildByFieldName("decorator"); d != nil {
-				decorators = append(decorators, decoratorName(d, src))
+				classDecorators = append(classDecorators, decor{decoratorName(d, src), decoratorArg(d, src)})
 			}
 			if inner := n.ChildByFieldName("declaration"); inner != nil {
 				decl = inner
@@ -134,8 +134,9 @@ func walkTSDefs(root *tree_sitter.Node, src []byte, add addFn) {
 			}
 			nm := name.Utf8Text(src)
 			add(graph.LabelClass, nm, nm, decl.StartPosition().Row, decl.EndPosition().Row,
-				tsExtra(exported, decorators))
-			walkTSClassMethods(decl, nm, src, add)
+				tsExtra(exported, decorNames(classDecorators)))
+			isCtrl, base := controllerArg(classDecorators)
+			walkTSClassMethods(decl, nm, isCtrl, base, src, add)
 
 		case "lexical_declaration", "variable_declaration":
 			walkTSVariableDecls(decl, src, exported, add)
@@ -182,25 +183,27 @@ func walkTSVariableDecls(decl *tree_sitter.Node, src []byte, exported bool, add 
 // name so methods of different classes don't collide. Method decorators are
 // sibling nodes that PRECEDE the method in the body, so we accumulate pending
 // decorators and attach them to the next method (NestJS @Get/@Post, etc).
-func walkTSClassMethods(class *tree_sitter.Node, className string, src []byte, add addFn) {
+func walkTSClassMethods(class *tree_sitter.Node, className string, isController bool, base string, src []byte, add addFn) {
 	body := class.ChildByFieldName("body")
 	if body == nil {
 		return
 	}
-	var pending []string
+	var pending []decor
 	for j := uint(0); j < body.NamedChildCount(); j++ {
 		m := body.NamedChild(j)
 		switch m.Kind() {
 		case "decorator":
-			pending = append(pending, decoratorName(m, src))
+			pending = append(pending, decor{decoratorName(m, src), decoratorArg(m, src)})
 		case "method_definition", "abstract_method_signature":
 			if name := m.ChildByFieldName("name"); name != nil {
 				mn := name.Utf8Text(src)
 				extra := map[string]any{"complexity": tsCyclomatic(m)}
 				if len(pending) > 0 {
-					extra["decorators"] = pending
+					extra["decorators"] = decorNames(pending)
 				}
-				add(graph.LabelMethod, mn, className+"."+mn, m.StartPosition().Row, m.EndPosition().Row, extra)
+				methodQN := className + "." + mn
+				add(graph.LabelMethod, mn, methodQN, m.StartPosition().Row, m.EndPosition().Row, extra)
+				emitRoutes(pending, isController, base, methodQN, m, add)
 			}
 			pending = nil
 		default:
