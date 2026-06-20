@@ -145,15 +145,27 @@ func opencodeManual(bin string) string {
 	return "Add to " + opencodeConfigPath() + ":\n" + string(blob)
 }
 
-// opencodeConfigPath is the global opencode config, honoring XDG_CONFIG_HOME and
-// falling back to ~/.config/opencode/opencode.json.
+// opencodeConfigPath is the global opencode config file to merge into, honoring
+// XDG_CONFIG_HOME (else ~/.config). It prefers an existing opencode.jsonc — opencode
+// reads either, and writing a second opencode.json next to the user's real .jsonc
+// would either be ignored or shadow their config. Defaults to opencode.json when
+// neither exists.
 func opencodeConfigPath() string {
 	base := os.Getenv("XDG_CONFIG_HOME")
 	if base == "" {
 		home, _ := os.UserHomeDir()
 		base = filepath.Join(home, ".config")
 	}
-	return filepath.Join(base, "opencode", "opencode.json")
+	dir := filepath.Join(base, "opencode")
+	if jsonc := filepath.Join(dir, "opencode.jsonc"); fileExists(jsonc) {
+		return jsonc
+	}
+	return filepath.Join(dir, "opencode.json")
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 
 // GenericManual is the fallback for any agent codegraph doesn't auto-register: the

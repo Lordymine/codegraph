@@ -2,9 +2,38 @@ package install
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"testing"
 )
+
+// TestOpencodeConfigPath_PrefersExistingJsonc pins that the installer merges into
+// the config file opencode actually reads: if the user has an opencode.jsonc, target
+// THAT (don't strand the registration in a second opencode.json the agent ignores);
+// otherwise default to opencode.json.
+func TestOpencodeConfigPath_PrefersExistingJsonc(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+
+	// No file yet → default to .json.
+	if got := opencodeConfigPath(); filepath.Base(got) != "opencode.json" {
+		t.Errorf("with no existing config, path = %q, want opencode.json", got)
+	}
+
+	// A pre-existing .jsonc must win.
+	ocDir := filepath.Join(dir, "opencode")
+	if err := os.MkdirAll(ocDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	jsonc := filepath.Join(ocDir, "opencode.jsonc")
+	if err := os.WriteFile(jsonc, []byte(`{"instructions":["x"]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := opencodeConfigPath(); got != jsonc {
+		t.Errorf("with an existing opencode.jsonc, path = %q, want %q", got, jsonc)
+	}
+}
 
 // TestRun_InstallsDetectedAndCollectsManual pins the flow: a detected agent with an
 // Install runs it (Installed); a detected agent without Install yields Manual text;
