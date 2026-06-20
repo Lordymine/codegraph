@@ -269,6 +269,34 @@ func (s *Store) TopByOutboundCalls(project string, limit int) ([]Node, error) {
 	return out, rows.Err()
 }
 
+// FunctionsWithoutInboundCalls returns Function/Method nodes that no in-graph
+// CALLS edge points at — the raw candidate set for the dead-code hint. It is only
+// the graph half of the answer: the query layer still drops entry points
+// (exported, decorated, main/init, tests) before reporting, because those have no
+// in-graph caller by design, not because they're dead.
+func (s *Store) FunctionsWithoutInboundCalls(project string) ([]Node, error) {
+	q := `SELECT ` + ftsCols("n.") + ` FROM nodes n
+		WHERE n.project=? AND n.label IN ('Function','Method')
+		AND NOT EXISTS (
+			SELECT 1 FROM edges e WHERE e.target_id = n.id AND e.type='CALLS'
+		)
+		ORDER BY n.file_path ASC, n.start_line ASC`
+	rows, err := s.db.Query(q, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Node
+	for rows.Next() {
+		n, err := scanNode(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, n)
+	}
+	return out, rows.Err()
+}
+
 // SampleByLabel returns a deterministic sample of nodes of a given label
 // (ordered by qualified name) — used to pick "where is X defined" questions.
 func (s *Store) SampleByLabel(project, label string, limit int) ([]Node, error) {

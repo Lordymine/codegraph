@@ -62,7 +62,7 @@ func extractDefsFromSource(project, relPath string, lang Lang, data []byte) ([]g
 	// 0-based Point.Row; we store 1-based lines.
 	add := func(label graph.NodeLabel, name, qnSuffix string, startRow, endRow uint, extra map[string]any) {
 		qn := fileQN + "." + qnSuffix
-		props := map[string]any{"lang": string(lang), "is_test": isTest(relPath)}
+		props := map[string]any{"lang": string(lang), "is_test": IsTestFile(relPath)}
 		for k, v := range extra {
 			props[k] = v
 		}
@@ -95,7 +95,11 @@ func baseName(p string) string {
 	return p
 }
 
-func isTest(p string) bool {
+// IsTestFile reports whether a repo-relative path is a test file, by the naming
+// conventions of the supported stacks (Go `_test.go`, JS/TS `.test.`/`.spec.`,
+// and `__tests__` dirs). Exported so the query layer can exclude test functions
+// from the dead-code hint — they're invoked by the test runner, not by code.
+func IsTestFile(p string) bool {
 	return strings.Contains(p, "_test.") || strings.Contains(p, ".test.") ||
 		strings.Contains(p, ".spec.") || strings.Contains(p, "/__tests__/")
 }

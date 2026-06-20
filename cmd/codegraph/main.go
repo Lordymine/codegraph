@@ -71,7 +71,7 @@ Usage:
   codegraph bench <path>          Re-index + measure token/tool-call/speed efficiency
   codegraph quality gen <repo> [outdir] [lang]   Generate the answer-quality question set
   codegraph quality score <dir>                  Grade filled truth+answers -> report.md
-  codegraph cli   <tool> <path> <json>   Run one query tool (search|callers|callees|neighbors|similar|snippet)
+  codegraph cli   <tool> <path> <json>   Run one query tool (search|callers|callees|neighbors|similar|dead_code|snippet)
 
 Store lives in ~/.cache/codegraph/<project>.db
 `)
@@ -432,6 +432,10 @@ func cmdCLI(args []string) error {
 	case "similar":
 		var refs []query.Ref
 		refs, err = eng.Similar(a.QualifiedName, a.Limit)
+		out = query.CompactRefs(refs)
+	case "dead_code":
+		var refs []query.Ref
+		refs, err = eng.DeadCode(a.Limit)
 		out = query.CompactRefs(refs)
 	case "snippet":
 		out, err = eng.Snippet(a.File, a.StartLine, a.EndLine)

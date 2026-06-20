@@ -110,6 +110,65 @@ func (e *Engine) Similar(qualifiedName string, limit int) ([]Ref, error) {
 	return e.neighbors(qualifiedName, "both", "SIMILAR_TO", limit)
 }
 
+// DeadCode lists private Function/Method nodes the graph sees no caller for: zero
+// inbound CALLS, minus the entry points whose callers can't be in-graph by design
+// — exported symbols (public API), decorated members (framework-invoked),
+// main/init, and test functions.
+//
+// It is a candidate list to investigate, NOT a delete list. Precision is bounded
+// by CALLS recall: a real caller the resolver missed, or an indirect reference
+// (function value, interface dispatch, reflection), makes a live function look
+// dead. On cobra, the top results were mostly such false positives — but it did
+// surface `appendIfNotPresent`, which cobra's own source marks unused. The agent
+// must confirm each (e.g. grep the name) before acting.
+func (e *Engine) DeadCode(limit int) ([]Ref, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	cands, err := e.store.FunctionsWithoutInboundCalls(e.project)
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]Ref, 0, limit)
+	for _, n := range cands {
+		if isEntryPoint(n) {
+			continue
+		}
+		refs = append(refs, refOf(n))
+		if len(refs) >= limit {
+			break
+		}
+	}
+	return refs, nil
+}
+
+// isEntryPoint reports whether an uncalled symbol legitimately has no in-graph
+// caller — so the absence of callers is not evidence that it's dead.
+func isEntryPoint(n graph.Node) bool {
+	if n.Props["is_exported"] == true {
+		return true
+	}
+	if n.Name == "main" || n.Name == "init" {
+		return true
+	}
+	if index.IsTestFile(n.FilePath) {
+		return true
+	}
+	return hasDecorators(n.Props)
+}
+
+// hasDecorators reports whether a node carries any decorator. The value round-trips
+// through JSON as []any (string slices come back as []interface{}), so accept both.
+func hasDecorators(props map[string]any) bool {
+	switch d := props["decorators"].(type) {
+	case []any:
+		return len(d) > 0
+	case []string:
+		return len(d) > 0
+	}
+	return false
+}
+
 // normalizeQN lets callers pass a qualified name with or without the project
 // prefix — the compact wire format strips it, so a returned qn comes back short.
 func (e *Engine) normalizeQN(qn string) string {
