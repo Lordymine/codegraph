@@ -135,6 +135,10 @@ func (s *Server) callTool(req rpcRequest) {
 		var refs []query.Ref
 		refs, err = s.eng.Neighbors(args.QualifiedName, args.Limit)
 		text = query.CompactRefs(refs)
+	case "similar":
+		var refs []query.Ref
+		refs, err = s.eng.Similar(args.QualifiedName, args.Limit)
+		text = query.CompactRefs(refs)
 	case "snippet":
 		text, err = s.eng.Snippet(args.File, args.StartLine, args.EndLine)
 	case "detect_changes":
@@ -174,6 +178,8 @@ func toolSpecs() []map[string]any {
 		spec("callees", "Outbound references from a symbol (what it uses). Returns TSV refs (see search).",
 			map[string]any{"qualified_name": str, "limit": num}, "qualified_name"),
 		spec("neighbors", "Both inbound and outbound neighbors of a symbol. Returns TSV refs (see search).",
+			map[string]any{"qualified_name": str, "limit": num}, "qualified_name"),
+		spec("similar", "Near-clone symbols of this one (SIMILAR_TO edges from MinHash/LSH). Surfaces copy-paste/duplicated logic to refactor. Returns TSV refs (see search).",
 			map[string]any{"qualified_name": str, "limit": num}, "qualified_name"),
 		spec("snippet", "Read the source lines for a node. Use only when you must see code.",
 			map[string]any{"file": str, "start_line": num, "end_line": num}, "file"),

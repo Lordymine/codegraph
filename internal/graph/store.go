@@ -448,35 +448,45 @@ func (s *Store) Neighbors(project, qualifiedName, direction, edgeType string, li
 	if limit <= 0 {
 		limit = 50
 	}
+	// The type filter is embedded per-SELECT so it also applies to the "both"
+	// UNION (one clause in each arm) — that's what lets `similar` ask for just
+	// SIMILAR_TO neighbors in both directions. edgeType="" leaves it off entirely,
+	// so plain `neighbors` still returns every edge kind.
+	typeClause := ""
+	if edgeType != "" {
+		typeClause = ` AND e.type=?`
+	}
+	endpoint := func(args []any) []any {
+		args = append(args, project, qualifiedName)
+		if edgeType != "" {
+			args = append(args, edgeType)
+		}
+		return args
+	}
 	var q string
+	var args []any
 	switch direction {
 	case "in":
 		q = `SELECT ` + ftsCols("n.") + ` FROM edges e
 			JOIN nodes n ON n.id = e.source_id
 			JOIN nodes t ON t.id = e.target_id
-			WHERE t.project=? AND t.qualified_name=?`
+			WHERE t.project=? AND t.qualified_name=?` + typeClause
+		args = endpoint(nil)
 	case "both":
 		q = `SELECT ` + ftsCols("n.") + ` FROM edges e
 			JOIN nodes n ON n.id = e.target_id JOIN nodes src ON src.id = e.source_id
-			WHERE src.project=? AND src.qualified_name=?
+			WHERE src.project=? AND src.qualified_name=?` + typeClause + `
 			UNION
 			SELECT ` + ftsCols("n.") + ` FROM edges e
 			JOIN nodes n ON n.id = e.source_id JOIN nodes tgt ON tgt.id = e.target_id
-			WHERE tgt.project=? AND tgt.qualified_name=?`
+			WHERE tgt.project=? AND tgt.qualified_name=?` + typeClause
+		args = endpoint(endpoint(nil))
 	default: // "out"
 		q = `SELECT ` + ftsCols("n.") + ` FROM edges e
 			JOIN nodes n ON n.id = e.target_id
 			JOIN nodes s ON s.id = e.source_id
-			WHERE s.project=? AND s.qualified_name=?`
-	}
-
-	args := []any{project, qualifiedName}
-	if direction == "both" {
-		args = append(args, project, qualifiedName)
-	}
-	if edgeType != "" && direction != "both" {
-		q += ` AND e.type=?`
-		args = append(args, edgeType)
+			WHERE s.project=? AND s.qualified_name=?` + typeClause
+		args = endpoint(nil)
 	}
 	q += ` LIMIT ?`
 	args = append(args, limit)

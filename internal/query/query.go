@@ -103,6 +103,13 @@ func (e *Engine) Neighbors(qualifiedName string, limit int) ([]Ref, error) {
 	return e.neighbors(qualifiedName, "both", "", limit)
 }
 
+// Similar: near-clone symbols (SIMILAR_TO edges) of this one. The edge is stored
+// once as smaller-QN -> larger-QN, so a clone may sit on either side — hence both
+// directions, filtered to SIMILAR_TO so call/define neighbors don't leak in.
+func (e *Engine) Similar(qualifiedName string, limit int) ([]Ref, error) {
+	return e.neighbors(qualifiedName, "both", "SIMILAR_TO", limit)
+}
+
 // normalizeQN lets callers pass a qualified name with or without the project
 // prefix — the compact wire format strips it, so a returned qn comes back short.
 func (e *Engine) normalizeQN(qn string) string {
