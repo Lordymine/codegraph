@@ -7,6 +7,18 @@ versions may include breaking changes).
 
 ## [Unreleased]
 
+### Fixed
+
+- **MCP server memory** — the long-running `mcp` server now returns freed indexing
+  memory to the OS (`debug.FreeOSMemory()`) once the background index finishes. The
+  Go call-graph resolver (go/packages + SSA + VTA) spikes the heap to several GB on
+  large repos and the runtime kept that arena reserved, so the stdio server sat at
+  the indexing peak for its whole life (≈130MB climbing past 10GB and staying there).
+  Steady state now drops back to the query baseline (measured: goclaw 3091MB →
+  149MB), with no effect on graph precision.
+
+### Planned
+
 - `HTTP_CALLS` (client call-site → route) and a committable `graph.db.zst` team
   artifact are planned for a future release (M6); see `docs/ROADMAP.md`.
 
