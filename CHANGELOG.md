@@ -7,6 +7,13 @@ versions may include breaking changes).
 
 ## [Unreleased]
 
+### Planned
+
+- `HTTP_CALLS` (client call-site → route) and a committable `graph.db.zst` team
+  artifact are planned for a future release (M6); see `docs/ROADMAP.md`.
+
+## [0.1.1] — 2026-06-22
+
 ### Fixed
 
 - **MCP server memory** — the long-running `mcp` server now returns freed indexing
@@ -16,11 +23,6 @@ versions may include breaking changes).
   the indexing peak for its whole life (≈130MB climbing past 10GB and staying there).
   Steady state now drops back to the query baseline (measured: goclaw 3091MB →
   149MB), with no effect on graph precision.
-
-### Planned
-
-- `HTTP_CALLS` (client call-site → route) and a committable `graph.db.zst` team
-  artifact are planned for a future release (M6); see `docs/ROADMAP.md`.
 
 ## [0.1.0] — 2026-06-20
 
@@ -58,5 +60,6 @@ Validated on real repositories of both stacks.
   independent oracle at ~4.5–8× fewer tokens than a grep-driven agent. Go callers
   ~100% intra-repo (cobra, gh-cli); TS ~89%.
 
-[Unreleased]: https://github.com/Lordymine/codegraph/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Lordymine/codegraph/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/Lordymine/codegraph/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Lordymine/codegraph/releases/tag/v0.1.0
