@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -211,6 +212,14 @@ func cmdMCP(root string) error {
 	})
 	go func() {
 		_, ierr := index.Run(st, root)
+		// The Go call-graph resolver (go/packages LoadAllSyntax + SSA + VTA) spikes the
+		// heap to several GB on large repos. Go's runtime keeps that arena reserved
+		// instead of returning it to the OS, so a long-running MCP server would sit at
+		// the indexing peak for its whole life — the "starts ~130MB, climbs past 10GB and
+		// stays there" growth users see. Hand the now-garbage pages back to the OS the
+		// moment indexing finishes; steady-state drops back to the query baseline
+		// (measured: goclaw 3091MB -> 149MB), with no effect on the graph's precision.
+		debug.FreeOSMemory()
 		mu.Lock()
 		defer mu.Unlock()
 		if ierr != nil {
