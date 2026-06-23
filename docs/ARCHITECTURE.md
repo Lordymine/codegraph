@@ -43,20 +43,37 @@ nodes_fts  -- FTS5(name, qualified_name, label, file_path) → BM25
 `Store` (internal/graph/store.go) is the only thing that touches SQL:
 `InsertNodes` (keeps FTS in sync), `InsertEdges` (resolves QN→id, drops
 unresolved), `Search` (BM25), `Neighbors` (in/out/both, the basis for
-callers/callees), `Snippet` (reads file lines), `Stats`, `FileHashes` + `CallEdges`
-(incremental reuse), `ReplaceProject`.
+callers/callees), `Snippet` (reads file lines), `Stats`, `FileHashes`,
+`ForEachCallEdge` (streaming CALLS for incremental reuse), `ReplaceProject`,
+`DBPath`, `Reopen`, and `BeginReadSnapshot`/`EndReadSnapshot` (pins a WAL read
+snapshot so a second connection can stream pre-wipe CALLS edges while the writer
+connection runs `ReplaceProject`).
 
 ## Indexing pipeline (internal/index)
 
+Two entry points share `prepareIndexing` + `runPipeline`:
+
+- **`Run(store, root)`** — tests and direct store use. Opens a **second** `Store` on
+  the same DB path, starts a read snapshot (`BeginReadSnapshot`), then wipes and
+  rebuilds on the writer connection. Unchanged scopes' CALLS are streamed from the
+  snapshot connection via `insertReusedCallEdges`.
+- **`RunAtomic(dbPath, root)`** — CLI/MCP production path. Builds into
+  `dbPath+.building`, renames on success; a failed re-index leaves the previous graph
+  at `dbPath` intact. Reuse reads from the main store file (separate path, never wiped
+  mid-pipeline) into the building store.
+
 ```
-DetectChanges(root)       per-file sha256 vs the indexed snapshot → no-op if unchanged
-Discover(root)            file walk; hard-ignores + .gitignore + .cbmignore; language detect
-  → ExtractDefinitions    per-file, in parallel — tree-sitter AST (treesitter.go)
-  → ResolveImports        IMPORTS edges (TS/JS, relative File→File)
-  → ResolveCalls          CALLS edges  scip-typescript (TS/JS) + go/packages VTA (Go);
-                          only changed scopes re-resolve, the rest are reused (M3)
-  → ResolveSimilar        SIMILAR_TO edges  MinHash+LSH over function token shingles (M4)
-  → Store.InsertNodes/Edges
+prepareIndexing(store)    DetectChanges → no-op Result if unchanged; else pipelineInput
+runPipeline(store, in)
+  Discover(root)          file walk; hard-ignores + .gitignore + .cbmignore; language detect
+  ReplaceProject          wipe project nodes/edges/FTS on the writer connection
+  → indexDefinitionsBatched  tree-sitter defs in bounded batches (memory.MaxWorkers)
+  → collectImportsStreaming  IMPORTS edges flushed per file (TS/JS)
+  → resolveTSCalls        scip-typescript per changed tsconfig scope; ScopesRun++ only on success
+  → resolveGoCalls        go/packages VTA for changed Go scope (best-effort, same contract as TS)
+  → insertReusedCallEdges unchanged scopes' CALLS from reuseFrom (snapshot or main file)
+  → resolveSimilarFromSpans  SIMILAR_TO from function spans only (skipped on low-RAM hosts)
+  memory.Gate()           between every heavy phase — returns freed pages to the OS
 ```
 
 `ExtractDefinitions` (definitions.go + treesitter.go) parses each file with the
@@ -68,7 +85,17 @@ and unresolved imports drop). `ResolveCalls` (calls.go) emits `CALLS` edges via 
 batch indexers — scip-typescript for TS/JS (`internal/scip`) and go/packages + a VTA
 call graph for Go (`internal/gocalls`) — dropping callees that aren't known graph symbols.
 Incremental (M3, incremental.go): `DetectChanges` gates a no-op when nothing changed, and
-a re-index re-resolves only the changed scopes, reusing the stored CALLS edges of the rest.
+a re-index re-resolves only the changed scopes, reusing the stored CALLS edges of the rest
+via `forEachReusableCallEdge` + batched `insertReusedCallEdges`.
+
+### Memory budget (internal/memory)
+
+Indexing auto-tunes at process start from installed RAM (and WSL detection): worker
+count, definition batch size, Go `debug.SetMemoryLimit`, scip-typescript
+`--max-old-space-size`, and optional `SkipSimilar` on constrained hosts.
+`CODEGRAPH_*` env vars override for debugging only — users need not set anything.
+`memory.Gate()` runs between pipeline phases (and after each scip scope) to hand freed
+heap back to the OS, which matters for the long-running MCP server after a large index.
 
 M4 enrichment: `ResolveSimilar` (similar.go) emits `SIMILAR_TO` near-clone edges from a
 MinHash signature + LSH banding over each function's token shingles (`internal/similar`,
@@ -90,9 +117,11 @@ would be heuristic string matching, not type-checker-delegated.
 `Engine` exposes the agent-facing operations: `Search`, `Callers`, `Callees`,
 `Neighbors`, `Similar`, `DeadCode` (each returning `[]Ref`), `Architecture` (the repo
 map — languages/counts/packages/hotspots, rendered compactly), `Snippet`, and
-`DetectChanges`. This is the contract both the CLI and the MCP server use, so behavior is
-identical across entry points. Relationship queries default to limit 500 (a hub can have
-hundreds of callers — a low cap would silently truncate the answer).
+`DetectChanges`. `Close`/`Reopen` wrap the underlying `Store` — the MCP server closes
+before a background `RunAtomic` (Windows file lock), then reopens the committed graph.
+This is the contract both the CLI and the MCP server use, so behavior is identical
+across entry points. Relationship queries default to limit 500 (a hub can have hundreds
+of callers — a low cap would silently truncate the answer).
 
 ## MCP server (internal/mcp)
 
@@ -104,15 +133,19 @@ Handles `initialize`, `tools/list`, `tools/call`. Tools: `search`, `callers`,
 The `mcp` command (M5) auto-indexes in a background goroutine on startup and gates
 tool calls behind a readiness check (`Server.SetReadiness`) — the handshake answers
 immediately, tools report "indexing" until the graph is built, never a half-written
-store. The repo is resolved from `$CLAUDE_PROJECT_DIR` (set by Claude Code) or cwd, so
-one registration serves any repo. `codegraph install` (`internal/install`) registers
-the server into detected agents — Claude Code/Codex via their add-CLI, opencode via a
-config-file merge — and prints a manual snippet for the rest.
+store. On index failure, `RunAtomic` leaves the previous graph on disk; the server
+reopens it and sets `ready=true` so tools keep working, prepending the failure status
+to every tool response (stale-data context). Do not run `codegraph index` on the same
+repo while MCP is auto-indexing — both contend for the same store file. The repo is
+resolved from `$CLAUDE_PROJECT_DIR` (set by Claude Code) or cwd, so one registration
+serves any repo. `codegraph install` (`internal/install`) registers the server into
+detected agents — Claude Code/Codex via their add-CLI, opencode via a config-file
+merge — and prints a manual snippet for the rest.
 
 ## CLI (cmd/codegraph)
 
 ```
-codegraph index   <path>               build the graph (no-op if unchanged)
+codegraph index   <path>               atomic build (RunAtomic; no-op if unchanged)
 codegraph stats   <path>               node/edge counts
 codegraph changes <path>               files changed since the last index
 codegraph install                      register the MCP server into detected agents
@@ -128,7 +161,8 @@ absolute repo path (matches upstream convention).
 ```
 cmd/codegraph/        CLI entrypoint + subcommands (index/stats/mcp/bench/quality/cli)
 internal/graph/       model.go (Node/Edge/labels/edge-types) + store.go (SQLite)
-internal/index/       discover.go, definitions.go + treesitter.go + complexity.go + routes.go, imports.go, calls.go, similar.go, incremental.go, pipeline.go
+internal/index/       discover.go, definitions.go + treesitter.go + complexity.go + routes.go, imports.go, calls.go, similar.go, incremental.go, prepare.go, pipeline.go
+internal/memory/      auto-tuned indexing RAM budget + Gate() between phases
 internal/scip/        scip-typescript runner + SCIP→CALLS attribution (TS/JS, M2)
 internal/gocalls/     go/packages + VTA call graph → CALLS (Go, M2; cha.go = generics-safe)
 internal/similar/     MinHash signature + LSH banding → SIMILAR_TO near-clone edges (M4)

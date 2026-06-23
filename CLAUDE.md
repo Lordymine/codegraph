@@ -60,6 +60,10 @@ Indexa um repo → grafo SQLite de símbolos + relações; o agente consulta o g
   (`internal/index/routes.go`). **Dogfooded** em Go (aurelia) + TS monorepo (LuminaSoft):
   calls corretos nos dois, sem falso-positivo de rota; o único ruído (código gerado/buildado
   commitado) sai com `.gitignore`/`.cbmignore`.
+- **v0.2.0 hardening** — `RunAtomic` (CLI/MCP; `*.building` + rename); budget de RAM
+  (`internal/memory`, batched defs, streaming imports); reuse CALLS via 2º Store +
+  `BeginReadSnapshot`; MCP fecha DB antes do index (Windows), reabre em falha e prepende
+  status de erro nas tools; `Store`/`Engine` `Reopen`.
 - Query engine (`internal/query`): search / callers / callees / neighbors / similar /
   dead_code / get_architecture / snippet / detect_changes.
 - MCP stdio JSON-RPC (`internal/mcp`); CLI (`cmd/codegraph`): `index | stats | changes |
@@ -83,7 +87,7 @@ ignora self-edge pra não dar função recursiva como viva). Ver `docs/QUALITY.m
 
 ```bash
 go build -o codegraph ./cmd/codegraph     # ou: make build
-./codegraph index <repo>                  # constrói o grafo
+./codegraph index <repo>                  # constrói o grafo (RunAtomic; atômico)
 ./codegraph stats <repo>
 ./codegraph cli search <repo> '{"query":"getActiveCode","limit":5}'
 ./codegraph mcp <repo>                     # serve MCP (stdio)

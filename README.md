@@ -129,7 +129,10 @@ codegraph install
 
 No per-repo step: the server auto-indexes whatever repo the agent opens (reading
 `$CLAUDE_PROJECT_DIR`, else its working directory). The first index runs in the
-background while the agent stays responsive; re-launches are an incremental no-op.
+background while the agent stays responsive; re-launches are an incremental no-op. Index
+builds are atomic — a failed re-index leaves the previous graph queryable, and the
+server surfaces a failure notice alongside tool results when that happens. Do not run
+`codegraph index` on the same repo while MCP is active (both contend for the store file).
 
 ### Prerequisites
 
@@ -178,7 +181,8 @@ Credibility is part of the pitch. codegraph **complements grep, it doesn't repla
 - **Dynamic dispatch / DI string tokens / reflection?** The type checker can't resolve
   them, so the edge is honestly dropped.
 - **Stale between re-indexes** — but re-index is incremental (a no-op when unchanged),
-  and the MCP server auto-re-indexes on launch, so an agent always opens a fresh graph.
+  and the MCP server auto-re-indexes on launch. If a re-index fails, the previous graph
+  stays available with a visible failure status.
 
 Use it for **map / understand / who-calls / disambiguate / cut tokens.**
 

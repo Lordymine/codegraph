@@ -7,17 +7,48 @@ versions may include breaking changes).
 
 ## [Unreleased]
 
-### Added
-
-- **Site release freshness** — download buttons on the GitHub Pages site now fetch
-  the latest GitHub Release at runtime, and the Pages deploy workflow also runs
-  when a release is published so the site is refreshed automatically after version
-  updates.
-
 ### Planned
 
 - `HTTP_CALLS` (client call-site → route) and a committable `graph.db.zst` team
   artifact are planned for a future release (M6); see `docs/ROADMAP.md`.
+
+## [0.2.0] — 2026-06-23
+
+### Added
+
+- **Memory-budget indexing** (`internal/memory`) — auto-tunes worker count, definition
+  batch size, Go heap limit, and scip-typescript Node heap cap from installed RAM (WSL
+  and low-RAM profiles). `memory.Gate()` between pipeline phases returns freed pages
+  to the OS. Optional `CODEGRAPH_*` env overrides for debugging only.
+- **Atomic index builds** — `RunAtomic` writes to `dbPath+.building` and renames on
+  success; failed re-indexes leave the previous graph intact. CLI `index` and MCP
+  background index use this path.
+- **WAL snapshot CALLS reuse** — `Run` opens a second store on the same DB path,
+  pins a read snapshot (`BeginReadSnapshot`), and streams unchanged scopes' CALLS via
+  `insertReusedCallEdges` after the writer wipes the project.
+- **`Store`/`Engine` lifecycle** — `DBPath`, `Reopen`, and `Engine.Close`/`Reopen` for
+  MCP and quality tooling after atomic commits.
+- **Site release freshness** (from prior unreleased work) — download buttons on the
+  GitHub Pages site fetch the latest GitHub Release at runtime; Pages redeploys on
+  release publish.
+
+### Fixed
+
+- **MCP index failure recovery** — on background index failure the server reopens the
+  previous graph, sets tools ready, and prepends the failure status to every tool
+  response so agents see stale-data context with results.
+- **MCP Windows file lock** — closes the live DB handle before `RunAtomic` so the
+  store file can be replaced on Windows.
+- **Scip scope count** — `ScopesRun` increments only after a successful scip scope
+  (not on resolver errors).
+- **Unified CALLS reuse path** — removed duplicate stash/slice loaders; `Run` and
+  `RunAtomic` share `forEachReusableCallEdge` + `insertReusedCallEdges`.
+
+### Changed
+
+- Indexing pipeline uses batched definition extraction and streaming import collection
+  to bound peak memory on large repos.
+- SIMILAR_TO resolution can be skipped automatically on constrained hosts (`SkipSimilar`).
 
 ## [0.1.1] — 2026-06-22
 
@@ -67,6 +98,7 @@ Validated on real repositories of both stacks.
   independent oracle at ~4.5–8× fewer tokens than a grep-driven agent. Go callers
   ~100% intra-repo (cobra, gh-cli); TS ~89%.
 
-[Unreleased]: https://github.com/Lordymine/codegraph/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/Lordymine/codegraph/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/Lordymine/codegraph/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/Lordymine/codegraph/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/Lordymine/codegraph/releases/tag/v0.1.0

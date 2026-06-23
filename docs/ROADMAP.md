@@ -142,6 +142,25 @@ real issues: MCP `required:null` (broke tools/list), the opencode config path, a
 committed generated/built code (Prisma client, minified bundles), handled by one
 `.cbmignore` line — no heuristic needed. See `docs/QUALITY.md`.
 
+## Post-M5 hardening ✅ (v0.2.0)
+
+Production fixes shipped after dogfooding on large repos and long-running MCP sessions:
+
+- **Atomic index builds** — `RunAtomic` writes to `*.building` and renames on success;
+  CLI `index` and MCP background index use this path so a failed re-index never wipes
+  the previous graph.
+- **Memory-budget indexing** (`internal/memory`) — auto-tuned workers, batch size, Go
+  heap limit, and scip Node heap cap from installed RAM; `memory.Gate()` between phases;
+  batched definitions + streaming imports; SIMILAR skipped on low-RAM hosts.
+- **CALLS reuse via WAL snapshot** — `Run` opens a second store connection and pins a
+  read snapshot before `ReplaceProject`; `insertReusedCallEdges` streams unchanged
+  scopes' edges (replaces a same-connection stash table).
+- **MCP failure recovery** — on index failure the server reopens the intact graph,
+  keeps tools ready, and prepends the failure status to responses (stale-data context).
+  Closes the live DB handle before `RunAtomic` (Windows file lock).
+- **`Store`/`Engine` `Reopen`** — canonical reopen after atomic commit; `ScopesRun`
+  counts only successful scip scopes.
+
 ## M6 — deferred from M5 (do when proven)
 
 - ⬜ **`HTTP_CALLS`** (client call-site → `Route`). Deferred deliberately: unlike the
