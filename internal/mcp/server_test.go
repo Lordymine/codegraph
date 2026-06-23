@@ -75,3 +75,24 @@ func TestServer_GatesToolCallsUntilIndexed(t *testing.T) {
 		t.Errorf("ready tool call must serve the query, not the indexing status; got %q", got)
 	}
 }
+
+// TestServer_SurfacesFailureStatusWhenReady pins the post-failure MCP path: when
+// background indexing fails but the previous graph was reopened, tools stay ready
+// and prepend the failure status so agents see stale-data context with results.
+func TestServer_SurfacesFailureStatusWhenReady(t *testing.T) {
+	const failMsg = "codegraph: indexing testproj failed: boom"
+	got := driveToolCall(t, func() (bool, string) { return true, failMsg })
+	if !strings.HasPrefix(got, failMsg) {
+		t.Errorf("ready+failed status must prepend failure message; got %q", got)
+	}
+}
+
+// TestServer_OmitsNonFailureReadyStatus ensures a successful ready message (e.g.
+// first-run "building" text left over) is not prepended once indexing succeeds.
+func TestServer_OmitsNonFailureReadyStatus(t *testing.T) {
+	const okMsg = "codegraph is building the index for testproj"
+	got := driveToolCall(t, func() (bool, string) { return true, okMsg })
+	if strings.HasPrefix(got, okMsg) {
+		t.Errorf("non-failure ready status must not be prepended; got %q", got)
+	}
+}

@@ -9,7 +9,9 @@
 package gocalls
 
 import (
+	"fmt"
 	"go/types"
+	"log"
 	"path/filepath"
 	"strings"
 
@@ -31,7 +33,9 @@ func CallEdges(project, root string, known func(qn string) bool) (edges []graph.
 	// the whole index.
 	defer func() {
 		if r := recover(); r != nil {
-			edges, err = nil, nil
+			log.Printf("codegraph: go call graph panic in %s: %v", root, r)
+			edges = nil
+			err = fmt.Errorf("go call graph: %v", r)
 		}
 	}()
 

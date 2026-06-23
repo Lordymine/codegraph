@@ -22,17 +22,41 @@ type Doc struct {
 	Tokens []string
 }
 
+// SigDoc carries a precomputed MinHash signature — used by the memory-budget indexer
+// so tokenized function bodies are not all retained at once.
+type SigDoc struct {
+	QN  string
+	Sig []uint64
+}
+
 // Edges returns SIMILAR_TO edges between docs whose estimated Jaccard similarity is at
 // least threshold. Candidate pairs come from LSH banding (not an all-pairs scan); each
-// surviving pair yields one symmetric edge (smaller QN -> larger) carrying the score.
+// surviving pair yields one symmetric pair (smaller QN -> larger) carrying the score.
 // Docs too short to form a shingle are ignored (trivial bodies are not clones).
 func Edges(project string, docs []Doc, threshold float64) []graph.Edge {
-	sigs := make([][]uint64, len(docs))
-	for i, d := range docs {
+	sigDocs := make([]SigDoc, 0, len(docs))
+	for _, d := range docs {
 		if len(d.Tokens) >= shingleK {
-			sigs[i] = Signature(d.Tokens, shingleK, numHashes)
+			sigDocs = append(sigDocs, SigDoc{QN: d.QN, Sig: Signature(d.Tokens, shingleK, numHashes)})
 		}
 	}
+	return EdgesFromSignatures(project, sigDocs, threshold)
+}
+
+// EdgesFromSignatures is like Edges but accepts precomputed signatures only.
+func EdgesFromSignatures(project string, docs []SigDoc, threshold float64) []graph.Edge {
+	sigs := make([][]uint64, len(docs))
+	for i, d := range docs {
+		sigs[i] = d.Sig
+	}
+	qns := make([]string, len(docs))
+	for i, d := range docs {
+		qns[i] = d.QN
+	}
+	return edgesFromSigs(project, qns, sigs, threshold)
+}
+
+func edgesFromSigs(project string, qns []string, sigs [][]uint64, threshold float64) []graph.Edge {
 
 	// LSH: bucket doc indices by (band, band-hash); a shared bucket is a candidate pair.
 	type bucket struct{ band, key uint64 }
@@ -65,7 +89,7 @@ func Edges(project string, docs []Doc, threshold float64) []graph.Edge {
 				if score < threshold {
 					continue
 				}
-				src, dst := docs[i].QN, docs[j].QN
+				src, dst := qns[i], qns[j]
 				if src > dst {
 					src, dst = dst, src
 				}

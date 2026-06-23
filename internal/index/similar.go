@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/Lordymine/codegraph/internal/graph"
+	"github.com/Lordymine/codegraph/internal/memory"
 	"github.com/Lordymine/codegraph/internal/similar"
 )
 
@@ -19,6 +20,8 @@ const similarThreshold = 0.7
 // ResolveSimilar emits SIMILAR_TO edges between near-clone functions/methods. It reads
 // each file once, tokenizes every function body, and runs the MinHash + LSH pass
 // (internal/similar). Cross-file by nature, so it always runs on the full node set.
+// Prefer resolveSimilarFromSpans during indexing — reuses CALLS spans and keeps
+// only MinHash signatures in RAM, not tokenized bodies for every function.
 func ResolveSimilar(project, root string, nodes []graph.Node) []graph.Edge {
 	byFile := map[string][]graph.Node{}
 	for _, n := range nodes {
@@ -26,6 +29,40 @@ func ResolveSimilar(project, root string, nodes []graph.Node) []graph.Edge {
 			byFile[n.FilePath] = append(byFile[n.FilePath], n)
 		}
 	}
+	return similarEdgesFromFiles(project, root, byFile)
+}
+
+// resolveSimilarFromSpans runs the SIMILAR_TO pass on spans already loaded for CALLS.
+// Each file is read once; only MinHash signatures are retained.
+func resolveSimilarFromSpans(project, root string, spans []graph.FunctionSpan) ([]graph.Edge, error) {
+	byFile := map[string][]graph.FunctionSpan{}
+	for _, sp := range spans {
+		byFile[sp.FilePath] = append(byFile[sp.FilePath], sp)
+	}
+	var sigDocs []similar.SigDoc
+	for file, fns := range byFile {
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(data), "\n")
+		data = nil
+		for _, sp := range fns {
+			toks := similar.Tokenize(linesOf(lines, sp.StartLine, sp.EndLine))
+			if len(toks) >= 3 {
+				sigDocs = append(sigDocs, similar.SigDoc{
+					QN:  sp.QualifiedName,
+					Sig: similar.Signature(toks, 3, 128),
+				})
+			}
+		}
+		lines = nil
+		memory.Gate()
+	}
+	return similar.EdgesFromSignatures(project, sigDocs, similarThreshold), nil
+}
+
+func similarEdgesFromFiles(project, root string, byFile map[string][]graph.Node) []graph.Edge {
 	var docs []similar.Doc
 	for file, fns := range byFile {
 		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(file)))

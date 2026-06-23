@@ -11,6 +11,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"strings"
 
 	"github.com/Lordymine/codegraph/internal/query"
 )
@@ -64,6 +66,7 @@ func (s *Server) Serve() error {
 		}
 		var req rpcRequest
 		if err := json.Unmarshal(line, &req); err != nil {
+			fmt.Fprintf(os.Stderr, "codegraph mcp: invalid JSON-RPC line: %v\n", err)
 			continue
 		}
 		s.handle(req)
@@ -105,11 +108,14 @@ type toolCallParams struct {
 }
 
 func (s *Server) callTool(req rpcRequest) {
+	var statusMsg string
 	if s.ready != nil {
-		if ok, msg := s.ready(); !ok {
+		ok, msg := s.ready()
+		if !ok {
 			s.reply(req.ID, map[string]any{"content": []map[string]any{{"type": "text", "text": msg}}})
 			return
 		}
+		statusMsg = msg
 	}
 	var p toolCallParams
 	_ = json.Unmarshal(req.Params, &p)
@@ -180,9 +186,22 @@ func (s *Server) callTool(req rpcRequest) {
 		s.fail(req.ID, -32000, err.Error())
 		return
 	}
+	if statusMsg != "" && indexFailureStatus(statusMsg) {
+		if text != "" {
+			text = statusMsg + "\n\n" + text
+		} else {
+			text = statusMsg
+		}
+	}
 	s.reply(req.ID, map[string]any{
 		"content": []map[string]any{{"type": "text", "text": text}},
 	})
+}
+
+// indexFailureStatus reports whether the readiness message should be echoed with
+// query results (index failed or was skipped, but the previous graph is queryable).
+func indexFailureStatus(msg string) bool {
+	return strings.Contains(msg, "failed:")
 }
 
 func toolSpecs() []map[string]any {

@@ -2,109 +2,256 @@ package index
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
-	"runtime"
 	"sync"
 
 	"github.com/Lordymine/codegraph/internal/graph"
+	"github.com/Lordymine/codegraph/internal/memory"
+	"github.com/Lordymine/codegraph/internal/scip"
 )
 
 // Result summarizes an indexing run.
 type Result struct {
-	Project      string
-	Files        int
-	Nodes        int
-	EdgesKept    int
-	EdgesDropped int
-	Reused       bool // nothing changed since the last index; the pipeline was skipped
+	Project       string
+	Files         int
+	Nodes         int
+	EdgesKept     int
+	EdgesDropped  int
+	Reused        bool // nothing changed since the last index; the pipeline was skipped
+	ScipScopes    int
+	ScipPeakRSS   uint64
+	ScipHeapCapMB int
 }
 
-// Run indexes root into store under a derived project name. The definitions pass
-// runs in parallel across files (one of the cheap wins of the RAM-first design);
-// imports + call resolution (CALLS edges) follow via ResolveImports/ResolveCalls.
+// BuildingSuffix is the suffix RunAtomic uses for in-progress index files.
+const BuildingSuffix = ".building"
+
+// Run indexes root into an already-open store (tests/temp dirs). Prefer RunAtomic
+// for CLI/MCP so a failed re-index does not wipe the previous graph.
 func Run(store *graph.Store, root string) (Result, error) {
-	root, _ = filepath.Abs(root)
-	project := ProjectName(root)
-
-	changes, err := DetectChanges(store, project, root)
+	in, reused, err := prepareIndexing(store, root)
 	if err != nil {
 		return Result{}, err
 	}
-	// Incremental no-op: nothing changed since the last index -> skip the whole
-	// pipeline (notably the expensive CALLS re-resolution) and reuse the stored graph.
-	// A never-indexed project reports every file as Added, so this only fires when
-	// there is a prior index to reuse.
-	if !changes.Any() {
-		if n, e, err := store.Stats(project); err == nil && n > 0 {
-			files, _ := store.FileHashes(project)
-			return Result{Project: project, Files: len(files), Nodes: n, EdgesKept: e, Reused: true}, nil
+	if reused != nil {
+		return *reused, nil
+	}
+	reuseFrom, err := graph.Open(store.DBPath())
+	if err != nil {
+		return Result{}, fmt.Errorf("open reuse store: %w", err)
+	}
+	defer reuseFrom.Close()
+	if err := reuseFrom.BeginReadSnapshot(); err != nil {
+		return Result{}, fmt.Errorf("begin read snapshot: %w", err)
+	}
+	defer reuseFrom.EndReadSnapshot()
+	in.reuseFrom = reuseFrom
+	return runPipeline(store, in)
+}
+
+// RunAtomic builds into dbPath+BuildingSuffix and renames on success, leaving the
+// previous graph at dbPath intact when indexing fails. Do not run `codegraph index`
+// on the same repo while an MCP server is auto-indexing it — both use this path and
+// can race on the store file.
+func RunAtomic(dbPath, root string) (Result, error) {
+	main, err := graph.Open(dbPath)
+	if err != nil {
+		return Result{}, err
+	}
+	in, reused, err := prepareIndexing(main, root)
+	if err != nil {
+		main.Close()
+		return Result{}, err
+	}
+	if reused != nil {
+		main.Close()
+		return *reused, nil
+	}
+	in.reuseFrom = main
+
+	building := dbPath + BuildingSuffix
+	_ = os.Remove(building)
+	store, err := graph.Open(building)
+	if err != nil {
+		main.Close()
+		return Result{}, err
+	}
+	res, err := runPipeline(store, in)
+	store.Close()
+	main.Close()
+	if err != nil {
+		_ = os.Remove(building)
+		return res, err
+	}
+	if err := commitBuiltIndex(building, dbPath); err != nil {
+		_ = os.Remove(building)
+		return res, fmt.Errorf("commit index: %w", err)
+	}
+	return res, nil
+}
+
+func commitBuiltIndex(building, dbPath string) error {
+	for _, suffix := range []string{"-wal", "-shm"} {
+		_ = os.Remove(dbPath + suffix)
+	}
+	if err := os.Remove(dbPath); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if err := os.Rename(building, dbPath); err != nil {
+		return err
+	}
+	for _, suffix := range []string{"-wal", "-shm"} {
+		_ = os.Remove(building + suffix)
+	}
+	return nil
+}
+
+func runPipeline(store *graph.Store, in pipelineInput) (Result, error) {
+	if err := pipelinePreflight(); err != nil {
+		return Result{}, err
+	}
+	files, err := Discover(in.root)
+	if err != nil {
+		return Result{}, err
+	}
+
+	if err := store.ReplaceProject(in.project); err != nil {
+		return Result{}, err
+	}
+
+	nodeCount, defEdges, err := indexDefinitionsBatched(store, in.project, files)
+	if err != nil {
+		return Result{}, err
+	}
+	k, d, err := store.InsertEdges(defEdges)
+	if err != nil {
+		return Result{}, fmt.Errorf("insert defines edges: %w", err)
+	}
+	edgesKept, edgesDropped := k, d
+	defEdges = nil
+	memory.Gate()
+
+	importEdges, err := collectImportsStreaming(in.project, files)
+	if err != nil {
+		return Result{}, err
+	}
+	k, d, err = store.InsertEdges(importEdges)
+	if err != nil {
+		return Result{}, err
+	}
+	edgesKept += k
+	edgesDropped += d
+	importEdges = nil
+	memory.Gate()
+
+	spans, err := store.FunctionSpans(in.project)
+	if err != nil {
+		return Result{}, err
+	}
+	enc := scip.BuildEnclosingFromSpans(spans)
+
+	scipRep, err := resolveTSCalls(store, in.project, in.root, enc, in.changed)
+	if err != nil {
+		return Result{}, fmt.Errorf("ts calls: %w", err)
+	}
+	memory.Gate()
+
+	goEdges, err := resolveGoCalls(in.project, in.root, files, enc, in.changed)
+	if err != nil {
+		return Result{}, fmt.Errorf("go calls: %w", err)
+	}
+	k, d, err = store.InsertEdges(goEdges)
+	if err != nil {
+		return Result{}, fmt.Errorf("insert go call edges: %w", err)
+	}
+	edgesKept += k
+	edgesDropped += d
+	goEdges = nil
+	memory.Gate()
+
+	if in.reuseFrom != nil {
+		k, d, err = insertReusedCallEdges(store, in.reuseFrom, in.project, in.changed, in.tsdirs)
+		if err != nil {
+			return Result{}, fmt.Errorf("insert reused call edges: %w", err)
 		}
+		edgesKept += k
+		edgesDropped += d
 	}
+	enc = nil
+	memory.Gate()
 
-	// Scope-gated CALLS: re-resolve only the scopes whose files changed, and reuse
-	// the stored edges of the rest (read now, before ReplaceProject wipes them).
-	tsdirs := tsconfigDirs(root)
-	changed := changedScopes(changes, tsdirs)
-	reusedEdges, err := reusableCallEdges(store, project, changed, tsdirs)
-	if err != nil {
-		return Result{}, err
+	if !memory.SkipSimilar() {
+		simEdges, err := resolveSimilarFromSpans(in.project, in.root, spans)
+		if err != nil {
+			return Result{}, err
+		}
+		k, d, err = store.InsertEdges(simEdges)
+		if err != nil {
+			return Result{}, fmt.Errorf("insert similar edges: %w", err)
+		}
+		edgesKept += k
+		edgesDropped += d
 	}
-
-	files, err := Discover(root)
-	if err != nil {
-		return Result{}, err
-	}
-
-	if err := store.ReplaceProject(project); err != nil {
-		return Result{}, err
-	}
-
-	// Parallel definitions pass.
-	type out struct {
-		nodes []graph.Node
-		edges []graph.Edge
-	}
-	results := make([]out, len(files))
-	sem := make(chan struct{}, runtime.NumCPU())
-	var wg sync.WaitGroup
-	for i, f := range files {
-		wg.Add(1)
-		sem <- struct{}{}
-		go func(i int, f SourceFile) {
-			defer wg.Done()
-			defer func() { <-sem }()
-			n, e := ExtractDefinitions(project, f)
-			results[i] = out{n, e}
-		}(i, f)
-	}
-	wg.Wait()
-
-	var allNodes []graph.Node
-	var allEdges []graph.Edge
-	for _, r := range results {
-		allNodes = append(allNodes, r.nodes...)
-		allEdges = append(allEdges, r.edges...)
-	}
-
-	// IMPORTS (always) + CALLS for changed scopes (fresh) + reused CALLS (unchanged)
-	// + SIMILAR_TO near-clones (cross-file, whole node set).
-	allEdges = append(allEdges, ResolveImports(project, files)...)
-	allEdges = append(allEdges, ResolveCalls(project, root, files, allNodes, changed)...)
-	allEdges = append(allEdges, reusedEdges...)
-	allEdges = append(allEdges, ResolveSimilar(project, root, allNodes)...)
-
-	if err := store.InsertNodes(allNodes); err != nil {
-		return Result{}, fmt.Errorf("insert nodes: %w", err)
-	}
-	kept, dropped, err := store.InsertEdges(allEdges)
-	if err != nil {
-		return Result{}, fmt.Errorf("insert edges: %w", err)
-	}
+	spans = nil
+	memory.Gate()
 
 	return Result{
-		Project: project, Files: len(files), Nodes: len(allNodes),
-		EdgesKept: kept, EdgesDropped: dropped,
+		Project: in.project, Files: len(files), Nodes: nodeCount,
+		EdgesKept: edgesKept, EdgesDropped: edgesDropped,
+		ScipScopes: scipRep.ScopesRun, ScipPeakRSS: scipRep.PeakRSS, ScipHeapCapMB: scipRep.HeapCapMB,
 	}, nil
+}
+
+// indexDefinitionsBatched extracts definitions with bounded parallelism, flushes
+// nodes to SQLite per batch, and returns DEFINES edges to insert in one shot (edges
+// are tiny vs nodes — holding them all is cheap; reloading idByQN per batch is not).
+func indexDefinitionsBatched(store *graph.Store, project string, files []SourceFile) (nodes int, defEdges []graph.Edge, err error) {
+	workers := memory.MaxWorkers()
+	batchSize := memory.BatchSize()
+
+	for start := 0; start < len(files); start += batchSize {
+		end := start + batchSize
+		if end > len(files) {
+			end = len(files)
+		}
+		batch := files[start:end]
+
+		type out struct {
+			nodes []graph.Node
+			edges []graph.Edge
+		}
+		results := make([]out, len(batch))
+		sem := make(chan struct{}, workers)
+		var wg sync.WaitGroup
+		for i, f := range batch {
+			wg.Add(1)
+			sem <- struct{}{}
+			go func(i int, f SourceFile) {
+				defer wg.Done()
+				defer func() { <-sem }()
+				n, e := ExtractDefinitions(project, f)
+				results[i] = out{n, e}
+			}(i, f)
+		}
+		wg.Wait()
+
+		var batchNodes []graph.Node
+		var batchEdges []graph.Edge
+		for _, r := range results {
+			batchNodes = append(batchNodes, r.nodes...)
+			batchEdges = append(batchEdges, r.edges...)
+		}
+		results = nil
+		if err := store.InsertNodes(batchNodes); err != nil {
+			return nodes, defEdges, fmt.Errorf("insert nodes: %w", err)
+		}
+		nodes += len(batchNodes)
+		defEdges = append(defEdges, batchEdges...)
+		batchNodes, batchEdges = nil, nil
+		memory.Gate()
+	}
+	return nodes, defEdges, nil
 }
 
 // ProjectName derives a stable project key from the repo root (matches the

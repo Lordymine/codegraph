@@ -26,7 +26,8 @@ type fileSrc struct {
 }
 
 // ResolveImports reads the files and emits IMPORTS edges. It is the disk-reading
-// wrapper around resolveImports.
+// wrapper around resolveImports. Prefer resolveImportsStreaming during indexing —
+// it holds one file at a time instead of the whole codebase.
 func ResolveImports(project string, files []SourceFile) []graph.Edge {
 	srcs := make([]fileSrc, 0, len(files))
 	for _, f := range files {
@@ -37,6 +38,45 @@ func ResolveImports(project string, files []SourceFile) []graph.Edge {
 		srcs = append(srcs, fileSrc{RelPath: f.RelPath, Lang: f.Lang, Data: data})
 	}
 	return resolveImports(project, srcs)
+}
+
+// collectImportsStreaming resolves IMPORTS one file at a time. Source bytes are not
+// retained for the whole repo; only the small edge list grows until a single insert.
+func collectImportsStreaming(project string, files []SourceFile) ([]graph.Edge, error) {
+	exists := make(map[string]bool, len(files))
+	for _, f := range files {
+		exists[f.RelPath] = true
+	}
+	var edges []graph.Edge
+	for _, f := range files {
+		if langFor(f.Lang) == nil || f.Lang == LangGo {
+			continue
+		}
+		data, err := os.ReadFile(f.AbsPath)
+		if err != nil {
+			continue
+		}
+		edges = append(edges, importEdgesForFile(project, f.RelPath, f.Lang, data, exists)...)
+		data = nil
+	}
+	return edges, nil
+}
+
+func importEdgesForFile(project, relPath string, lang Lang, data []byte, exists map[string]bool) []graph.Edge {
+	fileQN := project + ":" + relPath
+	var edges []graph.Edge
+	for _, spec := range extractImportSpecifiers(langFor(lang), data) {
+		target, ok := resolveTSImport(relPath, spec, exists)
+		if !ok || target == relPath {
+			continue
+		}
+		edges = append(edges, graph.Edge{
+			Project: project, SourceQN: fileQN,
+			TargetQN: project + ":" + target, Type: graph.EdgeImports,
+			Props: map[string]any{"specifier": spec},
+		})
+	}
+	return edges
 }
 
 // resolveImports is the testable core: it resolves each TS/JS file's relative

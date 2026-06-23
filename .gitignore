@@ -5,6 +5,11 @@
 /codegraph
 /codegraph.exe
 *.exe
+*.exe~
+
+# local agent / MCP scratch (not part of the repo)
+/agent-tools/
+/mcps/
 
 # local graph stores / scratch
 *.db

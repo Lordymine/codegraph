@@ -110,12 +110,13 @@ func openFor(root string) (*graph.Store, string, error) {
 }
 
 func cmdIndex(root string) error {
-	st, _, err := openFor(root)
+	root, _ = filepath.Abs(root)
+	sp, err := storePath(index.ProjectName(root))
 	if err != nil {
 		return err
 	}
-	defer st.Close()
-	res, err := index.Run(st, root)
+	res, err := index.RunAtomic(sp, root)
+	debug.FreeOSMemory()
 	if err != nil {
 		return err
 	}
@@ -126,6 +127,14 @@ func cmdIndex(root string) error {
 	}
 	fmt.Printf("indexed %s\n  files=%d nodes=%d edges=%d (dropped %d unresolved)\n",
 		res.Project, res.Files, res.Nodes, res.EdgesKept, res.EdgesDropped)
+	if res.ScipScopes > 0 {
+		line := fmt.Sprintf("  scip-typescript: %d scope(s), node heap cap %d MB",
+			res.ScipScopes, res.ScipHeapCapMB)
+		if res.ScipPeakRSS > 0 {
+			line += fmt.Sprintf(", peak RSS %d MB", res.ScipPeakRSS/(1024*1024))
+		}
+		fmt.Println(line)
+	}
 	return nil
 }
 
@@ -189,15 +198,21 @@ func cmdInstall() error {
 
 func cmdMCP(root string) error {
 	root, _ = filepath.Abs(resolveRepo(root))
-	st, project, err := openFor(root)
+	project := index.ProjectName(root)
+	sp, err := storePath(project)
 	if err != nil {
 		return err
 	}
-	defer st.Close()
+	st, err := graph.Open(sp)
+	if err != nil {
+		return err
+	}
 	eng := query.NewEngine(st, project, root)
+	defer eng.Close()
 	srv := mcp.NewServer(eng, os.Stdin, os.Stdout)
 
-	// Auto-index in the background so a repo "just works" the moment it's registered:
+	// Auto-index in the background so a repo "just works" the moment it's registered.
+	// Do not run `codegraph index` on the same repo while this server is active.
 	// the MCP handshake answers immediately while the graph builds, and tools report
 	// "indexing" (via the readiness gate) until it's ready — never a half-built store.
 	// M3 makes this a ~no-op on an unchanged repo, so it runs on every launch and the
@@ -211,7 +226,17 @@ func cmdMCP(root string) error {
 		return ready, status
 	})
 	go func() {
-		_, ierr := index.Run(st, root)
+		// Release the live DB handle so RunAtomic can replace the file on Windows.
+		if err := eng.Close(); err != nil {
+			mu.Lock()
+			status = "codegraph: close store before index failed: " + err.Error()
+			if rerr := eng.Reopen(sp); rerr == nil {
+				ready = true
+			}
+			mu.Unlock()
+			return
+		}
+		res, ierr := index.RunAtomic(sp, root)
 		// The Go call-graph resolver (go/packages LoadAllSyntax + SSA + VTA) spikes the
 		// heap to several GB on large repos. Go's runtime keeps that arena reserved
 		// instead of returning it to the OS, so a long-running MCP server would sit at
@@ -223,10 +248,25 @@ func cmdMCP(root string) error {
 		mu.Lock()
 		defer mu.Unlock()
 		if ierr != nil {
-			// Stay not-ready: surface the failure on every tool call rather than
-			// answering from a possibly half-written store.
+			// RunAtomic leaves the previous graph intact on disk; reopen so tools can
+			// still query it while surfacing the failure in the status message.
 			status = "codegraph: indexing " + project + " failed: " + ierr.Error()
+			if err := eng.Reopen(sp); err == nil {
+				ready = true
+			}
 			return
+		}
+		if err := eng.Reopen(sp); err != nil {
+			status = "codegraph: reopen store after index failed: " + err.Error()
+			return
+		}
+		if res.ScipScopes > 0 {
+			msg := fmt.Sprintf("codegraph: scip-typescript %d scope(s), node heap cap %d MB",
+				res.ScipScopes, res.ScipHeapCapMB)
+			if res.ScipPeakRSS > 0 {
+				msg += fmt.Sprintf(", peak RSS %d MB", res.ScipPeakRSS/(1024*1024))
+			}
+			fmt.Fprintln(os.Stderr, msg)
 		}
 		ready = true
 	}()
@@ -258,13 +298,18 @@ func cmdBench(root string) error {
 	if err != nil {
 		return err
 	}
-	defer st.Close()
+	eng := query.NewEngine(st, project, root)
+	defer eng.Close()
 
 	// 1) Indexing speed (our win vs upstream's ~20 min on Windows). Time is
 	// measured clean (no MemStats sampling in the loop, which would STW and skew
 	// it); memory is read once after, as a footprint — not a sampled peak.
+	sp, err := storePath(project)
+	if err != nil {
+		return err
+	}
 	t0 := time.Now()
-	res, err := index.Run(st, root)
+	res, err := index.RunAtomic(sp, root)
 	if err != nil {
 		return err
 	}
@@ -272,8 +317,11 @@ func cmdBench(root string) error {
 	var m1 runtime.MemStats
 	runtime.ReadMemStats(&m1)
 
+	if err := eng.Reopen(sp); err != nil {
+		return err
+	}
 	// 2) Token / tool-call efficiency over the top call hubs.
-	hubs, err := st.TopByInboundCalls(project, 15)
+	hubs, err := eng.TopByInboundCalls(15)
 	if err != nil {
 		return err
 	}
@@ -281,8 +329,6 @@ func cmdBench(root string) error {
 	if err != nil {
 		return err
 	}
-	eng := query.NewEngine(st, project, root)
-
 	var outs []bench.Outcome
 	for _, q := range bench.QuestionsFromHubs(hubs) {
 		o, err := bench.RunOne(eng, corpus, q)
@@ -378,7 +424,14 @@ func cmdQualityGen(repo, outdir, lang string) error {
 
 	// Index on demand so `gen` is self-contained.
 	if n, _, _ := st.Stats(project); n == 0 {
-		if _, err := index.Run(st, repo); err != nil {
+		sp, err := storePath(project)
+		if err != nil {
+			return err
+		}
+		if _, err := index.RunAtomic(sp, repo); err != nil {
+			return err
+		}
+		if err := st.Reopen(sp); err != nil {
 			return err
 		}
 	}

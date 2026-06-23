@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite driver (no cgo) — driver name "sqlite"
@@ -14,7 +15,9 @@ import (
 // FTS5 index over node names. The whole "graph" is an adjacency list with
 // indexes on edge source/target/type — graph queries are just indexed SQL.
 type Store struct {
-	db *sql.DB
+	db     *sql.DB
+	path   string
+	snapTx *sql.Tx // optional DEFERRED read txn pinning a pre-wipe graph snapshot
 }
 
 const schema = `
@@ -68,10 +71,99 @@ func Open(path string) (*Store, error) {
 	if _, err := db.Exec(schema); err != nil {
 		return nil, fmt.Errorf("schema: %w", err)
 	}
-	return &Store{db: db}, nil
+	return &Store{db: db, path: path}, nil
 }
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	if s.snapTx != nil {
+		_ = s.snapTx.Rollback()
+		s.snapTx = nil
+	}
+	if s.db == nil {
+		return nil
+	}
+	err := s.db.Close()
+	s.db = nil
+	return err
+}
+
+// BeginReadSnapshot starts a DEFERRED read transaction that pins the current DB
+// snapshot. While active, ForEachCallEdge reads through this txn so a concurrent
+// writer (e.g. ReplaceProject on another connection) does not hide pre-wipe CALLS.
+func (s *Store) BeginReadSnapshot() error {
+	if s.snapTx != nil {
+		return fmt.Errorf("read snapshot already active")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	// DEFERRED txns pin their snapshot on the first table read — do it now so a
+	// concurrent ReplaceProject cannot hide CALLS before reuse iteration runs.
+	var n int
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM edges`).Scan(&n); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	s.snapTx = tx
+	return nil
+}
+
+// EndReadSnapshot ends the read snapshot started by BeginReadSnapshot.
+func (s *Store) EndReadSnapshot() error {
+	if s.snapTx == nil {
+		return nil
+	}
+	err := s.snapTx.Rollback()
+	s.snapTx = nil
+	return err
+}
+
+func (s *Store) readConn() queryer {
+	if s.snapTx != nil {
+		return s.snapTx
+	}
+	return s.db
+}
+
+type queryer interface {
+	Query(query string, args ...any) (*sql.Rows, error)
+}
+
+// DBPath returns the filesystem path this store was opened with.
+func (s *Store) DBPath() string { return s.path }
+
+// Reopen closes the current connection and opens path (or the same DBPath when empty).
+func (s *Store) Reopen(path string) error {
+	if path == "" {
+		path = s.path
+	}
+	if s.snapTx != nil {
+		_ = s.snapTx.Rollback()
+		s.snapTx = nil
+	}
+	if s.db != nil {
+		if err := s.db.Close(); err != nil {
+			return err
+		}
+		s.db = nil
+	}
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		return err
+	}
+	if _, err := db.Exec(`PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;`); err != nil {
+		_ = db.Close()
+		return err
+	}
+	if _, err := db.Exec(schema); err != nil {
+		_ = db.Close()
+		return fmt.Errorf("schema: %w", err)
+	}
+	s.db = db
+	s.path = path
+	return nil
+}
 
 // ReplaceProject wipes a project's nodes/edges/FTS so a re-index is clean.
 // (Incremental indexing — only changed files — is a later milestone.)
@@ -142,6 +234,36 @@ func (s *Store) InsertNodes(nodes []Node) error {
 	return tx.Commit()
 }
 
+// FunctionSpan is a lightweight function/method row for caller attribution during
+// CALLS resolution — much smaller than a full Node (no properties JSON).
+type FunctionSpan struct {
+	QualifiedName string
+	FilePath      string
+	StartLine     int
+	EndLine       int
+}
+
+// FunctionSpans returns every Function/Method span in a project. The indexing
+// pipeline loads this instead of keeping all nodes in RAM for CALLS/SIMILAR.
+func (s *Store) FunctionSpans(project string) ([]FunctionSpan, error) {
+	rows, err := s.db.Query(`SELECT qualified_name, file_path, start_line, end_line
+		FROM nodes WHERE project=? AND label IN ('Function','Method')
+		ORDER BY file_path, start_line`, project)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []FunctionSpan
+	for rows.Next() {
+		var sp FunctionSpan
+		if err := rows.Scan(&sp.QualifiedName, &sp.FilePath, &sp.StartLine, &sp.EndLine); err != nil {
+			return nil, err
+		}
+		out = append(out, sp)
+	}
+	return out, rows.Err()
+}
+
 // InsertEdges resolves source/target qualified names to node IDs and inserts.
 // QN→id resolution is done once in memory (was one correlated subquery per edge —
 // O(edges) two-table lookups). Edges whose endpoints don't exist are dropped.
@@ -150,10 +272,9 @@ func (s *Store) InsertEdges(edges []Edge) (inserted, dropped int, err error) {
 		return 0, 0, nil
 	}
 
-	// Load QN→id once. Qualified names already carry the project prefix, so they
-	// are globally unique; no per-project filter needed.
+	project := edges[0].Project
 	idByQN := make(map[string]int64)
-	rows, err := s.db.Query(`SELECT qualified_name, id FROM nodes`)
+	rows, err := s.db.Query(`SELECT qualified_name, id FROM nodes WHERE project=?`, project)
 	if err != nil {
 		return 0, 0, err
 	}
@@ -468,32 +589,44 @@ type CallEdge struct {
 	Props      map[string]any
 }
 
-// CallEdges returns every CALLS edge in the project with its caller's file path.
-// Read before a re-index so unchanged scopes' edges can be kept instead of
-// re-resolved (the expensive scip / go+VTA pass).
-func (s *Store) CallEdges(project string) ([]CallEdge, error) {
-	rows, err := s.db.Query(`SELECT src.qualified_name, tgt.qualified_name, src.file_path, e.properties
+// ForEachCallEdge streams CALLS edges without materializing the full set. fn is
+// invoked once per edge; returning a non-nil error stops iteration.
+func (s *Store) ForEachCallEdge(project string, fn func(CallEdge) error) error {
+	rows, err := s.readConn().Query(`SELECT src.qualified_name, tgt.qualified_name, src.file_path, e.properties
 		FROM edges e
 		JOIN nodes src ON src.id = e.source_id
 		JOIN nodes tgt ON tgt.id = e.target_id
 		WHERE e.project=? AND e.type='CALLS'`, project)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer rows.Close()
-	var out []CallEdge
 	for rows.Next() {
 		var ce CallEdge
 		var props string
 		if err := rows.Scan(&ce.SourceQN, &ce.TargetQN, &ce.SourceFile, &props); err != nil {
-			return nil, err
+			return err
 		}
 		if props != "" {
 			_ = json.Unmarshal([]byte(props), &ce.Props)
 		}
-		out = append(out, ce)
+		if err := fn(ce); err != nil {
+			return err
+		}
 	}
-	return out, rows.Err()
+	return rows.Err()
+}
+
+// CallEdges returns every CALLS edge in the project with its caller's file path.
+// Read before a re-index so unchanged scopes' edges can be kept instead of
+// re-resolved (the expensive scip / go+VTA pass).
+func (s *Store) CallEdges(project string) ([]CallEdge, error) {
+	var out []CallEdge
+	err := s.ForEachCallEdge(project, func(ce CallEdge) error {
+		out = append(out, ce)
+		return nil
+	})
+	return out, err
 }
 
 // Stats returns node/edge counts for a project.
@@ -649,9 +782,14 @@ func (s *Store) Neighbors(project, qualifiedName, direction, edgeType string, li
 }
 
 // Snippet reads the source lines [start,end] for a node from disk. repoRoot is
-// the absolute root the file_path values are relative to.
+// the repository root; filePath must be repo-relative (as stored on nodes). Paths
+// outside the root — including .. segments and absolute paths — are rejected.
 func Snippet(repoRoot, filePath string, start, end int) (string, error) {
-	data, err := os.ReadFile(repoRoot + string(os.PathSeparator) + filePath)
+	abs, err := resolveRepoFile(repoRoot, filePath)
+	if err != nil {
+		return "", err
+	}
+	data, err := os.ReadFile(abs)
 	if err != nil {
 		return "", err
 	}
@@ -666,4 +804,35 @@ func Snippet(repoRoot, filePath string, start, end int) (string, error) {
 		return "", fmt.Errorf("bad range %d-%d", start, end)
 	}
 	return strings.Join(lines[start-1:end], "\n"), nil
+}
+
+// resolveRepoFile maps a repo-relative path to an absolute path confined under
+// repoRoot. Used by Snippet so MCP/CLI callers cannot escape the indexed tree.
+func resolveRepoFile(repoRoot, filePath string) (string, error) {
+	root, err := filepath.Abs(repoRoot)
+	if err != nil {
+		return "", fmt.Errorf("repo root: %w", err)
+	}
+	rel := filepath.FromSlash(filePath)
+	if filepath.IsAbs(rel) {
+		return "", fmt.Errorf("absolute paths are not allowed")
+	}
+	rel = filepath.Clean(rel)
+	if rel == "." || rel == "" {
+		return "", fmt.Errorf("empty file path")
+	}
+	full := filepath.Join(root, rel)
+	full, err = filepath.Abs(full)
+	if err != nil {
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+	// filepath.Rel on Windows accepts case-insensitive roots; good enough for confinement.
+	out, err := filepath.Rel(root, full)
+	if err != nil {
+		return "", fmt.Errorf("path outside repository root")
+	}
+	if out == ".." || strings.HasPrefix(out, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path outside repository root")
+	}
+	return full, nil
 }

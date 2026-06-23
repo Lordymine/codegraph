@@ -89,25 +89,51 @@ func scopeOf(rel string, tsconfigDirs []string) string {
 	return best
 }
 
-// reusableCallEdges returns the stored CALLS edges whose caller's scope is NOT being
-// re-resolved — they survive a re-index verbatim (resolved by qualified name on
-// insert, so they tolerate the node re-id). Must be read before ReplaceProject.
-func reusableCallEdges(store *graph.Store, project string, changed map[string]bool, tsconfigDirs []string) ([]graph.Edge, error) {
-	stored, err := store.CallEdges(project)
-	if err != nil {
-		return nil, err
-	}
-	var out []graph.Edge
-	for _, e := range stored {
+const reusedCallEdgeBatch = 2048
+
+// forEachReusableCallEdge invokes fn for each stored CALLS edge whose caller scope
+// is not being re-resolved. source must still hold the pre-reindex graph.
+func forEachReusableCallEdge(source *graph.Store, project string, changed map[string]bool, tsconfigDirs []string, fn func(graph.Edge) error) error {
+	return source.ForEachCallEdge(project, func(e graph.CallEdge) error {
 		if changed[scopeOf(e.SourceFile, tsconfigDirs)] {
-			continue // this scope is being re-resolved; drop the old edge
+			return nil
 		}
-		out = append(out, graph.Edge{
+		return fn(graph.Edge{
 			Project: project, SourceQN: e.SourceQN, TargetQN: e.TargetQN,
 			Type: graph.EdgeCalls, Props: e.Props,
 		})
+	})
+}
+
+// insertReusedCallEdges streams reusable CALLS edges from source into target in batches.
+// source must hold a pre-wipe graph snapshot (second connection + BeginReadSnapshot for
+// Run, or the main store file for RunAtomic).
+func insertReusedCallEdges(target, source *graph.Store, project string, changed map[string]bool, tsconfigDirs []string) (inserted, dropped int, err error) {
+	var batch []graph.Edge
+	flush := func() error {
+		if len(batch) == 0 {
+			return nil
+		}
+		k, d, e := target.InsertEdges(batch)
+		inserted += k
+		dropped += d
+		batch = batch[:0]
+		return e
 	}
-	return out, nil
+	err = forEachReusableCallEdge(source, project, changed, tsconfigDirs, func(e graph.Edge) error {
+		batch = append(batch, e)
+		if len(batch) >= reusedCallEdgeBatch {
+			return flush()
+		}
+		return nil
+	})
+	if err != nil {
+		return inserted, dropped, err
+	}
+	if err := flush(); err != nil {
+		return inserted, dropped, err
+	}
+	return inserted, dropped, nil
 }
 
 // changedScopes is the set of CALLS scopes touched by a change set — exactly the

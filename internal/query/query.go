@@ -75,6 +75,35 @@ func NewEngine(store *graph.Store, project, repoRoot string) *Engine {
 	return &Engine{store: store, project: project, repoRoot: repoRoot}
 }
 
+// Close releases the underlying store. Safe to call multiple times.
+func (e *Engine) Close() error {
+	if e.store == nil {
+		return nil
+	}
+	err := e.store.Close()
+	e.store = nil
+	return err
+}
+
+// Reopen closes the current store and opens dbPath. Used after RunAtomic replaces
+// the on-disk graph file while the MCP server is running.
+func (e *Engine) Reopen(dbPath string) error {
+	if e.store == nil {
+		st, err := graph.Open(dbPath)
+		if err != nil {
+			return err
+		}
+		e.store = st
+		return nil
+	}
+	return e.store.Reopen(dbPath)
+}
+
+// TopByInboundCalls returns call-graph hubs for benchmarking and quality tooling.
+func (e *Engine) TopByInboundCalls(limit int) ([]graph.Node, error) {
+	return e.store.TopByInboundCalls(e.project, limit)
+}
+
 // Search: ranked symbol search (BM25). label optional ("Function", "Class"...).
 func (e *Engine) Search(q, label string, limit int) ([]Ref, error) {
 	hits, err := e.store.Search(e.project, q, label, limit)

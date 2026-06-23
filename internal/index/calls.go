@@ -1,33 +1,34 @@
 package index
 
 import (
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/Lordymine/codegraph/internal/gocalls"
 	"github.com/Lordymine/codegraph/internal/graph"
+	"github.com/Lordymine/codegraph/internal/memory"
 	"github.com/Lordymine/codegraph/internal/scip"
 )
 
-// ResolveCalls emits CALLS edges. For TS/JS it delegates to scip-typescript
-// (batch, type-checker-accurate) per tsconfig subproject and attributes each
-// resolved reference to the function/method that encloses it (the caller). It is
-// best-effort: a subproject whose scip run fails contributes no edges rather than
-// failing the whole index. Go call resolution is in-process via go/packages + a CHA
-// call graph (internal/gocalls).
-// changed gates which CALLS scopes are re-resolved: nil re-resolves everything (a
-// full index); otherwise only scopes present in the set run (each tsconfig dir, and
-// "go"). Unchanged scopes' edges are reused by the caller, not recomputed here.
-func ResolveCalls(project, root string, files []SourceFile, nodes []graph.Node, changed map[string]bool) []graph.Edge {
-	enc := scip.BuildEnclosing(nodes)
-	var edges []graph.Edge
+// ScipReport summarizes scip-typescript resource use across all TS scopes in one
+// index run. PeakRSS is the max child RSS observed (Linux/WSL); zero elsewhere.
+type ScipReport struct {
+	ScopesRun int
+	PeakRSS   uint64
+	HeapCapMB int
+}
 
-	// TS/JS: scip-typescript per tsconfig subproject. dir is repo-relative; "" means
-	// the repo root (a single-package repo whose only tsconfig is at the top).
+// resolveTSCalls runs scip-typescript per tsconfig scope in isolation: one scope at
+// a time, CALLS edges flushed to SQLite immediately, protobuf and Node heap released
+// via memory.Gate() before the next scope or the Go VTA pass — same pattern as Go.
+func resolveTSCalls(store *graph.Store, project, root string, enc scip.Enclosing, changed map[string]bool) (ScipReport, error) {
+	var rep ScipReport
+
 	for _, dir := range tsconfigDirs(root) {
 		if changed != nil && !changed[dir] {
-			continue // scope unchanged: its edges are reused, not re-resolved
+			continue
 		}
 		abs := filepath.Join(root, filepath.FromSlash(dir))
 		name := dir
@@ -35,20 +36,47 @@ func ResolveCalls(project, root string, files []SourceFile, nodes []graph.Node, 
 			name = "root"
 		}
 		out := filepath.Join(os.TempDir(), "codegraph-"+strings.ReplaceAll(name, "/", "-")+".scip")
-		idx, err := scip.RunAndRead(abs, out)
+		idx, st, err := scip.RunAndRead(abs, out)
+		_ = os.Remove(out)
+		if rep.HeapCapMB == 0 {
+			rep.HeapCapMB = st.NodeHeapMB
+		}
+		if st.PeakRSSBytes > rep.PeakRSS {
+			rep.PeakRSS = st.PeakRSSBytes
+		}
 		if err != nil {
-			continue // best-effort per subproject
+			continue // best-effort per scope (same contract as resolveGoCalls)
 		}
-		edges = append(edges, scip.CallEdges(idx, project, dir, enc)...)
+		rep.ScopesRun++
+		scopeEdges := scip.CallEdges(idx, project, dir, enc)
+		idx = nil
+		if _, _, err := store.InsertEdges(scopeEdges); err != nil {
+			return rep, err
+		}
+		scopeEdges = nil
+		memory.Gate()
 	}
+	return rep, nil
+}
 
-	// Go: in-process go/packages + VTA call graph (one whole-module "go" scope).
-	if (changed == nil || changed["go"]) && hasGo(files) {
-		if goEdges, err := gocalls.CallEdges(project, root, enc.Has); err == nil {
-			edges = append(edges, goEdges...)
-		}
+// resolveGoCalls runs the in-process Go VTA resolver. Call only after TS scopes are
+// done and gated — avoids overlapping the two largest memory spikes.
+func resolveGoCalls(project, root string, files []SourceFile, enc scip.Enclosing, changed map[string]bool) ([]graph.Edge, error) {
+	if changed != nil && !changed["go"] {
+		return nil, nil
 	}
-	return edges
+	if !hasGo(files) {
+		return nil, nil
+	}
+	edges, err := gocalls.CallEdges(project, root, enc.Has)
+	memory.Gate()
+	if err != nil {
+		// Best-effort per scope, matching resolveTSCalls: a resolver failure must not
+		// abort the whole index — log and continue without Go CALLS for this run.
+		log.Printf("codegraph: go calls skipped for %s: %v", root, err)
+		return nil, nil
+	}
+	return edges, nil
 }
 
 func hasGo(files []SourceFile) bool {
@@ -91,7 +119,7 @@ func tsconfigDirs(root string) []string {
 		return nil
 	})
 	if len(subDirs) == 0 && rootHas {
-		return []string{""} // single-package repo: index at the root
+		return []string{""}
 	}
 	return subDirs
 }
