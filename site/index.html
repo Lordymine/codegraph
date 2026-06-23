@@ -266,7 +266,7 @@
           </div>
           <div class="hero-actions">
             <a class="btn btn-primary" href="https://github.com/Lordymine/codegraph">View on GitHub</a>
-            <a class="btn btn-secondary" href="https://github.com/Lordymine/codegraph/releases/latest">Download v0.1.0</a>
+            <a class="btn btn-secondary" href="https://github.com/Lordymine/codegraph/releases/latest" data-latest-release>Download v0.1.1</a>
           </div>
           <div class="trust">
             <span><span class="tick" aria-hidden="true">✓</span> Type-checker precision</span>
@@ -486,7 +486,7 @@ hotspots (most called):
         <p>Give your agent the call graph, and the direction that comes with it.</p>
         <div class="acts">
           <a class="btn btn-primary" href="https://github.com/Lordymine/codegraph">View on GitHub</a>
-          <a class="btn btn-secondary" href="https://github.com/Lordymine/codegraph/releases/latest">Download v0.1.0</a>
+          <a class="btn btn-secondary" href="https://github.com/Lordymine/codegraph/releases/latest" data-latest-release>Download v0.1.1</a>
         </div>
       </div>
     </section>
@@ -537,6 +537,25 @@ hotspots (most called):
         });
       });
     });
+
+    (function updateLatestReleaseLinks() {
+      var links = document.querySelectorAll('[data-latest-release]');
+      if (!links.length || !window.fetch) return;
+      fetch('https://api.github.com/repos/Lordymine/codegraph/releases/latest', {
+        headers: { 'Accept': 'application/vnd.github+json' }
+      }).then(function (res) {
+        if (!res.ok) throw new Error('latest release lookup failed');
+        return res.json();
+      }).then(function (release) {
+        if (!release || !release.tag_name) return;
+        links.forEach(function (link) {
+          link.textContent = 'Download ' + release.tag_name;
+          if (release.html_url) link.href = release.html_url;
+        });
+      }).catch(function () {
+        // Keep the checked-in fallback label/link when GitHub's API is unavailable.
+      });
+    })();
   </script>
 </body>
 </html>

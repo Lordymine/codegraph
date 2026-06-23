@@ -7,6 +7,13 @@ versions may include breaking changes).
 
 ## [Unreleased]
 
+### Added
+
+- **Site release freshness** — download buttons on the GitHub Pages site now fetch
+  the latest GitHub Release at runtime, and the Pages deploy workflow also runs
+  when a release is published so the site is refreshed automatically after version
+  updates.
+
 ### Planned
 
 - `HTTP_CALLS` (client call-site → route) and a committable `graph.db.zst` team
